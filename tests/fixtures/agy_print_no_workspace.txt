@@ -1,0 +1,2 @@
+The user doesn't have an active workspace set. Let me check the default scratch directory:
+The scratch directory at `/Users/f42/.gemini/antigravity-cli/scratch` is **empty** — there are no files or subdirectories present. It looks like you don't have a repository or workspace set up yet. Could you point me to the directory you'd like me to list?
