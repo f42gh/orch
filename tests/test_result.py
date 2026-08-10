@@ -132,3 +132,78 @@ def test_result_json_records_engine_cost_and_diffstat(tmp_path: Path) -> None:
     assert "added.py" in payload["changed_files"]
     assert "added.py" in payload["diffstat"]
     assert payload["warnings"] == ["check this"]
+
+
+def test_test_run_bytecode_stays_out_of_the_review_diff(tmp_path: Path) -> None:
+    """Observed in a real run: an engine ran the tests it wrote and the .pyc files
+    landed in the diff as binary blobs a reviewer then had to wade through."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    init_repo(workspace)
+    (workspace / "real_change.py").write_text("x = 1\n", encoding="utf-8")
+    cache = workspace / "__pycache__"
+    cache.mkdir()
+    (cache / "calc.cpython-312.pyc").write_bytes(b"\x00\x01binary")
+    (workspace / ".pytest_cache").mkdir()
+    (workspace / ".pytest_cache" / "lastfailed").write_text("{}", encoding="utf-8")
+
+    diff = save_git_diff(Config(runtime_root=tmp_path / "runtime"), "task-0001", workspace)
+    text = diff.read_text(encoding="utf-8")
+
+    assert "real_change.py" in text
+    assert "__pycache__" not in text
+    assert ".pytest_cache" not in text
+
+
+def test_tracked_files_are_never_filtered_out(tmp_path: Path) -> None:
+    """The exclusions only apply to the untracked sweep; a repo that tracks a path
+    still gets its changes reviewed."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    init_repo(workspace)
+    vendored = workspace / "node_modules"
+    vendored.mkdir()
+    (vendored / "patched.js").write_text("original\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-f", "node_modules/patched.js"], cwd=workspace, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "vendor"], cwd=workspace, check=True, stdout=subprocess.DEVNULL
+    )
+    (vendored / "patched.js").write_text("patched by the agent\n", encoding="utf-8")
+
+    diff = save_git_diff(Config(runtime_root=tmp_path / "runtime"), "task-0001", workspace)
+
+    assert "patched by the agent" in diff.read_text(encoding="utf-8")
+
+
+def test_capturing_a_diff_does_not_touch_the_worktree_index(tmp_path: Path) -> None:
+    """Staging into the real index makes the exclusions stop applying on the next call,
+    and leaves a human opening the worktree with a staged mess the agent never made."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    init_repo(workspace)
+    (workspace / "added.py").write_text("x = 1\n", encoding="utf-8")
+    config = Config(runtime_root=tmp_path / "runtime")
+
+    save_git_diff(config, "task-0001", workspace)
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=workspace, capture_output=True, text=True, check=True
+    )
+    assert status.stdout.strip() == "?? added.py"  # still untracked, nothing staged
+
+
+def test_exclusions_still_apply_on_a_second_capture(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    init_repo(workspace)
+    (workspace / "real.py").write_text("x = 1\n", encoding="utf-8")
+    (workspace / "__pycache__").mkdir()
+    (workspace / "__pycache__" / "real.cpython-312.pyc").write_bytes(b"\x00binary")
+    config = Config(runtime_root=tmp_path / "runtime")
+
+    save_git_diff(config, "task-0001", workspace)
+    diff = save_git_diff(config, "task-0001", workspace)
+
+    text = diff.read_text(encoding="utf-8")
+    assert "real.py" in text
+    assert "__pycache__" not in text

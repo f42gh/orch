@@ -163,11 +163,27 @@ def _load_last_json_object(stdout: str) -> dict[str, Any] | None:
 
 
 def _maybe_json(text: str) -> dict[str, Any] | None:
+    """Read a schema-constrained answer out of the response text.
+
+    A model under a schema sometimes emits one object per turn and they arrive
+    concatenated, so a plain `json.loads` fails on the whole string. Decoding
+    incrementally and keeping the last complete object recovers the final answer.
+    """
     stripped = text.strip()
     if not stripped.startswith("{"):
         return None
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+
+    decoder = json.JSONDecoder()
+    index = 0
+    last: dict[str, Any] | None = None
+    while index < len(stripped):
+        try:
+            parsed, end = decoder.raw_decode(stripped, index)
+        except json.JSONDecodeError:
+            break
+        if isinstance(parsed, dict):
+            last = parsed
+        index = end
+        while index < len(stripped) and stripped[index] in " \t\r\n":
+            index += 1
+    return last

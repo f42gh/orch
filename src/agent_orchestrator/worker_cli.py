@@ -18,7 +18,7 @@ from agent_orchestrator.db import TaskStore
 from agent_orchestrator.engines import EngineResult, RunSpec, get_adapter
 from agent_orchestrator.logging_utils import append_log, task_log_dir
 from agent_orchestrator.models import Engine, Task, TaskStatus
-from agent_orchestrator.prompts import build_prompt
+from agent_orchestrator.prompts import build_prompt, schema_for
 from agent_orchestrator.result import save_git_diff, write_result_json
 from agent_orchestrator.router import (
     EnginePolicy,
@@ -50,7 +50,9 @@ def run_task(config: Config, store: TaskStore, task: Task) -> TaskStatus:
 
     table = load_routing_table(config.routing_path)
     policy = resolve_policy(task.kind, task.risk, task.engine, table)
-    prompt = build_prompt(task, policy.access)
+    # The prompt must agree with whether a schema is being enforced, or the model is
+    # asked for two incompatible output shapes at once.
+    prompt = build_prompt(task, policy.access, structured=schema_for(task.kind) is not None)
 
     artifacts = log_dir / "artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)

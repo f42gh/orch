@@ -78,7 +78,9 @@ COMMON_RULES = """
 - secret, token, private key を読まない
 - git commit / git push をしない（差分は人間がレビューする）
 - deploy しない
+"""
 
+PROSE_OUTPUT_RULES = """
 ## 最後に必ず出力すること
 - 変更した内容（変更していない場合はその旨）
 - 実行したコマンドとその結果
@@ -86,12 +88,34 @@ COMMON_RULES = """
 - 残っているリスクと未解決の問題
 """
 
+#: Used whenever the engine is also constrained by a JSON schema.
+#:
+#: Asking for the prose sections above *and* enforcing a closed schema puts the model in
+#: a bind it cannot satisfy: observed with grok, which emitted a schema-shaped object
+#: every turn and never terminated, burning the whole turn budget before being
+#: cancelled. The two instructions must not both be present.
+STRUCTURED_OUTPUT_RULES = """
+## 出力形式
+回答は、指定された JSON スキーマに厳密に一致する **JSON オブジェクトを 1 個だけ** 返してください。
+- 散文の前置き・後書き・コードフェンスを付けない
+- JSON オブジェクトを複数出力しない
+- スキーマに無いキーを追加しない
+- 指摘が無い場合は findings を空配列にし、summary にその判断理由を書く
+調査は必要なだけ行って構いませんが、最終出力はこの JSON 1 個だけです。
+"""
 
-def build_prompt(task: Task, access: AccessLevel = AccessLevel.WORKSPACE_WRITE) -> str:
+
+def build_prompt(
+    task: Task,
+    access: AccessLevel = AccessLevel.WORKSPACE_WRITE,
+    structured: bool = False,
+) -> str:
     """Compose the prompt for `task`.
 
     `access` comes from the router rather than from the task so that the prompt always
-    agrees with the sandbox the process is actually started under.
+    agrees with the sandbox the process is actually started under. `structured` must be
+    true whenever the engine is being given a JSON schema, so the prompt asks for the
+    schema's shape instead of contradicting it.
     """
     high_risk_note = ""
     if task.risk == Risk.HIGH:
@@ -101,6 +125,8 @@ def build_prompt(task: Task, access: AccessLevel = AccessLevel.WORKSPACE_WRITE) 
 実装・編集・削除は禁止です。
 調査、影響範囲の整理、実装計画、リスク分析だけを行ってください。
 """
+
+    output_rules = STRUCTURED_OUTPUT_RULES if structured else PROSE_OUTPUT_RULES
 
     return f"""あなたはローカル開発環境で動く coding agent です。
 
@@ -115,7 +141,7 @@ def build_prompt(task: Task, access: AccessLevel = AccessLevel.WORKSPACE_WRITE) 
 
 ## リスクレベル
 {task.risk.value}
-{KIND_INSTRUCTIONS[task.kind]}{ACCESS_INSTRUCTIONS[access]}{high_risk_note}{COMMON_RULES}"""
+{KIND_INSTRUCTIONS[task.kind]}{ACCESS_INSTRUCTIONS[access]}{high_risk_note}{COMMON_RULES}{output_rules}"""
 
 
 #: Schema handed to engines that can constrain their final answer. Used for review so the

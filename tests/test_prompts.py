@@ -1,0 +1,71 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+
+from agent_orchestrator.models import Priority, Risk, Task, TaskKind, TaskStatus
+from agent_orchestrator.prompts import build_prompt, schema_for
+from agent_orchestrator.router import AccessLevel
+
+
+def make_task(kind: TaskKind, risk: Risk = Risk.NORMAL) -> Task:
+    now = datetime.now(UTC)
+    return Task(
+        id="task-0001",
+        repo_path=Path("/repo"),
+        task="do the thing",
+        risk=risk,
+        priority=Priority.NORMAL,
+        status=TaskStatus.RUNNING,
+        created_at=now,
+        updated_at=now,
+        kind=kind,
+        workspace_path=Path("/ws"),
+    )
+
+
+def test_prose_and_schema_instructions_are_never_both_present() -> None:
+    """Asking for prose sections while enforcing a closed schema made grok emit a
+    schema-shaped object every turn and never terminate, burning its whole budget."""
+    structured = build_prompt(make_task(TaskKind.REVIEW), AccessLevel.READ_ONLY, structured=True)
+    prose = build_prompt(make_task(TaskKind.IMPLEMENT), AccessLevel.WORKSPACE_WRITE)
+
+    assert "JSON オブジェクトを 1 個だけ" in structured
+    assert "最後に必ず出力すること" not in structured
+
+    assert "最後に必ず出力すること" in prose
+    assert "JSON オブジェクトを 1 個だけ" not in prose
+
+
+def test_only_review_is_schema_constrained() -> None:
+    assert schema_for(TaskKind.REVIEW) is not None
+    for kind in TaskKind:
+        if kind is not TaskKind.REVIEW:
+            assert schema_for(kind) is None
+
+
+def test_prompt_states_the_access_level_it_actually_runs_under() -> None:
+    read_only = build_prompt(make_task(TaskKind.INVESTIGATE), AccessLevel.READ_ONLY)
+    writing = build_prompt(make_task(TaskKind.IMPLEMENT), AccessLevel.WORKSPACE_WRITE)
+
+    assert "読み取り専用" in read_only
+    assert "作業ディレクトリ内のファイルだけ変更できます" in writing
+
+
+def test_high_risk_is_planning_only() -> None:
+    prompt = build_prompt(make_task(TaskKind.IMPLEMENT, Risk.HIGH), AccessLevel.READ_ONLY)
+
+    assert "実装・編集・削除は禁止" in prompt
+
+
+def test_every_kind_has_its_own_instructions() -> None:
+    for kind in TaskKind:
+        prompt = build_prompt(make_task(kind))
+        assert "## このタスクの進め方" in prompt
+        assert kind.value in prompt
+
+
+def test_no_commit_or_push_is_always_stated() -> None:
+    for kind in TaskKind:
+        prompt = build_prompt(make_task(kind), structured=schema_for(kind) is not None)
+        assert "git commit / git push をしない" in prompt

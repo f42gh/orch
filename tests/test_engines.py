@@ -6,6 +6,7 @@ so these tests catch a vendor changing their output shape without spending API c
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -334,3 +335,22 @@ def test_opting_in_does_reach_the_engine(name: str, tmp_path: Path) -> None:
 
     joined = " ".join(spec.argv)
     assert any(marker in joined for marker in ESCAPE_MARKERS[name])
+
+
+def test_grok_recovers_the_last_object_when_a_model_repeats_itself() -> None:
+    """Observed in a real run: under a schema the model emitted one object per turn and
+    they arrived concatenated, which a plain json.loads cannot read at all."""
+    stdout = json.dumps(
+        {
+            "text": '{"summary":"first pass","findings":[]}'
+            '{"summary":"final answer","findings":[{"severity":"low","file":"a.py",'
+            '"summary":"x","failure":"y"}]}',
+            "stopReason": "end_turn",
+        }
+    )
+
+    result = GrokAdapter().parse(stdout, "", 0, RunSpec(argv=[]))
+
+    assert result.structured is not None
+    assert result.structured["summary"] == "final answer"
+    assert len(result.structured["findings"]) == 1
