@@ -137,3 +137,7 @@ def main() -> None:
     if args.command == "run-task":
         status = asyncio.run(run_one_task(store, args.task_id))
         print(f"{args.task_id}: {status.value}")
+
+
+if __name__ == "__main__":
+    main()

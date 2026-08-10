@@ -1,7 +1,7 @@
 [project]
 name = "agent-orchestrator"
 version = "0.1.0"
-description = "Local task orchestrator for isolated Claude Agent SDK workers"
+description = "Local multi-engine agent orchestrator: routes tasks to codex, grok, antigravity or claude in isolated git worktrees"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
@@ -14,19 +14,25 @@ api = [
 claude = [
   "claude-code-sdk>=0.0.25",
 ]
+mcp = [
+  "mcp>=2.0",
+]
 
 [dependency-groups]
 dev = [
   "fastapi>=0.125",
+  "mcp>=2.0",
   "httpx>=0.28",
   "pytest>=8.0",
   "uvicorn>=0.38",
+  "pytest-asyncio>=1.4.0",
 ]
 
 [project.scripts]
 agentctl = "agent_orchestrator.cli:main"
 agentd = "agent_orchestrator.daemon:main"
 agentapi = "agent_orchestrator.api:main"
+agentmcp = "agent_orchestrator.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -35,3 +41,4 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+asyncio_mode = "auto"

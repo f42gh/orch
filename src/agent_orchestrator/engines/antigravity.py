@@ -104,7 +104,11 @@ class AntigravityAdapter:
 
         payload = _maybe_json(text)
         if payload is not None:
-            # A future build with --output-format json; prefer its fields.
+            status = str(payload.get("status") or "")
+            if status and status != "SUCCESS":
+                # agy exits 0 on CANCELED/INTERRUPTED too, so `status` is the only
+                # signal that the run did not really finish.
+                warnings.append(f"agy reported status {status}")
             return EngineResult(
                 text=str(payload.get("response") or payload.get("text") or text),
                 exit_code=exit_code,

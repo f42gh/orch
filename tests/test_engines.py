@@ -221,6 +221,30 @@ def test_antigravity_promotes_itself_when_the_binary_grows_json(tmp_path: Path) 
     assert spec.argv[spec.argv.index("--output-format") + 1] == "json"
 
 
+def test_antigravity_parses_the_json_build(tmp_path: Path) -> None:
+    """agy grew --output-format between 1.0.12 and 1.1.11; this is the newer shape."""
+    adapter = AntigravityAdapter(capabilities=_agy_capabilities(structured=True))
+
+    result = adapter.parse(
+        (FIXTURES / "agy_print.json").read_text(encoding="utf-8"), "", 0, RunSpec(argv=[])
+    )
+
+    assert "calc.py" in result.text
+    assert result.session_id == "a04753fe-4d39-48a6-bd02-ba88fb0ce1f2"
+    assert result.usage is not None
+    assert result.usage["total_tokens"] == 28673
+    assert result.warnings == ()
+
+
+def test_antigravity_flags_a_non_success_status() -> None:
+    """agy exits 0 on CANCELED, so the status field is the only failure signal."""
+    adapter = AntigravityAdapter(capabilities=_agy_capabilities(structured=True))
+
+    result = adapter.parse('{"status":"CANCELED","response":"partial"}', "", 0, RunSpec(argv=[]))
+
+    assert any("CANCELED" in warning for warning in result.warnings)
+
+
 def _agy_capabilities(structured: bool) -> Capabilities:
     return Capabilities(
         engine=Engine.ANTIGRAVITY,

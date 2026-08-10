@@ -10,8 +10,12 @@ Measured on 2026-08-10, macOS arm64.
 |---|---|---|---|---|---|
 | codex | `codex` | 0.147.0 | JSONL via `--json` | `-C <dir>` | **must be closed** |
 | grok | `grok` | 1.0.0 | single JSON via `--output-format json` | `--cwd <dir>` | closed is fine |
-| antigravity | `agy` | 1.0.12 | **none** (plain text only) | **`--add-dir <dir>` required** | closed is fine |
+| antigravity | `agy` | 1.0.12 → 1.1.11 | none → single JSON (see below) | **`--add-dir <dir>` required** | closed is fine |
 | claude | `claude` | 2.1.226 | single JSON via `--output-format json` | process cwd | closed is fine |
+
+`agy` self-updated from 1.0.12 to 1.1.11 midway through this work, which is the reason
+capabilities are probed rather than assumed: the adapter moved onto the JSON path on
+its own, with no code change. Both shapes stay covered by fixtures.
 
 ## codex
 
@@ -88,13 +92,33 @@ Two findings that contradict the public material:
    without it the agent silently works on the wrong tree.
    Fixture of that failure mode: `tests/fixtures/agy_print_no_workspace.txt`
 
-Also confirmed by `strings $(command -v agy)`: `--output-format`, `stream-json` and
-`--effort` are **absent from the 1.0.12 binary** (0 matches), even though the published
-docs describe them. `probe()` parses `agy --help` and promotes the adapter to a JSON
-path automatically once a future version grows the flag.
+On 1.0.12, `strings $(command -v agy)` confirmed that `--output-format`, `stream-json`
+and `--effort` were **absent from the binary** (0 matches) even though the published docs
+described them. Plain-text output has no envelope, so there was no session id, usage or
+cost. Fixture: `tests/fixtures/agy_print.txt`
 
-- Output is plain text with no envelope, so there is no session id, usage, or cost.
-- Fixture: `tests/fixtures/agy_print.txt`
+1.1.11 added `--output-format`, `--json-schema`, `--effort`, `--agent` and `--mode`, and
+`probe()` moved the adapter onto the JSON path automatically. The envelope is:
+
+```json
+{
+  "conversation_id": "a04753fe-4d39-48a6-bd02-ba88fb0ce1f2",
+  "status": "SUCCESS",
+  "response": "The repository contains: `.git/`, `README.md` (73 B), `calc.py` (32 B).\n",
+  "duration_seconds": 10.313214,
+  "num_turns": 1,
+  "usage": {"input_tokens": 28469, "output_tokens": 204, "thinking_tokens": 0,
+            "cache_read_tokens": 27101, "total_tokens": 28673}
+}
+```
+
+Notes:
+
+- The answer is `response`, and the session id is `conversation_id`.
+- **`status` is the only failure signal**: agy exits 0 on `CANCELED` and `INTERRUPTED`
+  as well as `SUCCESS`, so exit code alone will call a cut-short run a success.
+- Still no cost field.
+- Fixture: `tests/fixtures/agy_print.json`
 
 ## claude
 
