@@ -45,6 +45,18 @@ class EnginePolicy:
     #: pass their `--dangerously-*` flags unless this is set.
     allow_dangerous: bool = False
 
+    @property
+    def effective_access(self) -> AccessLevel:
+        """The access level adapters are allowed to act on.
+
+        `resolve_policy` only produces FULL alongside the opt-in, but adapters read this
+        instead of `access` so that a hand-built or deserialised policy cannot turn an
+        unsandboxed run on by setting one field.
+        """
+        if self.access is AccessLevel.FULL and not self.allow_dangerous:
+            return AccessLevel.WORKSPACE_WRITE
+        return self.access
+
 
 #: Which engine handles which kind of work, and what to fall back to.
 #:
