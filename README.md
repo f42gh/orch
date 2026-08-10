@@ -6,19 +6,26 @@ A local agent orchestrator that hands coding work to whichever agent CLI suits i
 each task in its own git worktree, and gives the result back for a human to review.
 
 Claude Code is the orchestrator. `codex`, `grok`, `agy` (Antigravity) and `claude` are
-workers, reached over an MCP server. A task's *kind* provides the automatic engine
-default:
+workers, reached over an MCP server. You can choose the engine assignment for every
+Run, Batch, or single task. When you leave a kind on automatic routing, these defaults
+apply:
 
-| kind | engine | access |
+| kind | automatic route | access |
 |---|---|---|
-| `implement` / `refactor` / `test` | codex | writes, inside the worktree |
-| `review` / `investigate` | grok | read-only |
-| `ui_verify` | antigravity | writes, inside the worktree |
-| (fallback for all of the above) | claude | |
+| `implement` | codex → claude → grok | writes, inside the worktree |
+| `refactor` | codex → grok → claude | writes, inside the worktree |
+| `test` | codex → claude → grok | writes, inside the worktree |
+| `review` | grok → codex → claude | read-only |
+| `investigate` | grok → claude → codex | read-only |
+| `ui_verify` | antigravity → claude | writes, inside the worktree |
 
-Anything not installed falls back automatically, so a missing engine degrades instead of
-failing. `docs/engine-capabilities.md` records what each CLI actually does, measured
-rather than taken from its documentation.
+In automatic mode, an exhausted chain falls back deterministically to another installed
+engine, so work can proceed as long as at least one worker CLI is available. The
+[engine capability notes](docs/engine-capabilities.md) record what each CLI actually
+does, measured rather than taken from its documentation.
+
+These are defaults, not fixed assignments. Use the interactive `agentctl start`, pass an
+exact `--engine` for one task, or define a route table for a Run or Batch.
 
 For a new workflow you can replace those defaults with an explicit route table. Choose
 the table once, before anything starts:
@@ -38,6 +45,9 @@ have a human adopt and commit them and pass that commit as `base_ref`.
 
 ## Setup
 
+Requirements: Python 3.12+, `uv`, Git, and at least one installed and authenticated
+worker CLI. Claude Code is required only for the MCP-driven workflow.
+
 ```bash
 git clone https://github.com/f42gh/orch
 cd orch
@@ -50,20 +60,25 @@ credentials.
 
 ### Use it from Claude Code
 
-```bash
-claude mcp add orch -s user -- uv run --directory ~/dev/orch agentmcp
-```
-
-Then `/orch <what you want done>`, or call the tools directly. See
-`docs/CLAUDE-PLAYBOOK.md` for the patterns worth knowing — fan-out, and having one engine
-implement while a different one reviews.
-
-Install the repository's `/orch` command template to make that workflow explicit in
-Claude Code:
+Register the MCP server and install the repository's `/orch` command template:
 
 ```bash
+claude mcp add orch -s user -- uv run --directory /absolute/path/to/orch agentmcp
 uv run agentctl install-claude-command
 ```
+
+Start a new Claude Code session, then run `/orch <what you want done>`. Before dispatching
+anything, `/orch` shows the available engines, proposes a Run or Batch and its
+assignments, and waits for your confirmation. You can also call the MCP tools directly.
+Replace `/absolute/path/to/orch` with this checkout's absolute path. The installer only
+places the command file; it does not register the MCP server, and the command expects the
+server name `orch` used above.
+
+The direct workflow tools are `orch_run_create`, `orch_run_dispatch` and
+`orch_run_close` for Runs, `orch_batch_dispatch` for a Batch, and
+`orch_workflow_list`/`orch_workflow_show` for resuming or inspecting saved workflows.
+See the [Claude Code playbook](docs/CLAUDE-PLAYBOOK.md) for patterns such as fan-out and
+having one engine implement while a different one reviews.
 
 The default target is `~/.claude/commands/orch.md`. An identical file is left alone. A
 different existing command is never overwritten unless you pass `--force`; forced
@@ -72,25 +87,61 @@ somewhere else.
 
 ## Use it from the terminal
 
+For an interactive start where you choose the assignments for this use, run:
+
+```bash
+uv run agentctl start
+```
+
+The wizard detects installed engines, asks whether this is a persistent Run or a
+one-shot Batch, shows the automatic routes, and lets you override each task kind before
+anything starts. It requires a TTY. The Run path creates an empty Run and prints its
+`workflow_id`; add the first task with `run dispatch` as shown below. For scripts and
+repeatable commands, use the explicit forms below.
+
 Create a persistent Run when you expect to add work later:
 
 ```bash
 uv run agentctl run create --repo ~/dev/my-project \
-  --route implement=codex \
-  --fallback implement=claude,grok
-uv run agentctl run dispatch run-0001 --task "add the parser" --kind implement
-uv run agentctl run show run-0001
-uv run agentctl run close run-0001
+  --route implement=grok \
+  --fallback implement=codex,claude
+
+# Copy workflow_id from the create output, for example run-0007.
+uv run agentctl run dispatch run-0007 --task "add the parser" --kind implement
+uv run agentctl run show run-0007
+uv run agentctl run list
+uv run agentctl run close run-0007
 ```
 
 Submit a one-shot Batch when every independent task is already known. The tasks file is
 a JSON array of task specifications; `--tasks-file -` reads it from stdin.
 
+```json
+[
+  {
+    "task": "add the parser",
+    "kind": "implement",
+    "risk": "normal",
+    "priority": "high",
+    "base_ref": "main"
+  },
+  {
+    "task": "review the authentication flow",
+    "kind": "review"
+  }
+]
+```
+
+Allowed task keys are `task`, `kind`, `risk`, `priority`, `parent_id` and `base_ref`.
+Choose engines at workflow level with `--route`; an `engine` key is not accepted in a
+Batch task object.
+
 ```bash
 uv run agentctl batch dispatch --repo ~/dev/my-project \
-  --route implement=codex \
-  --fallback implement=claude,grok \
+  --route implement=grok \
+  --fallback implement=codex,claude \
   --tasks-file tasks.json
+uv run agentctl batch list
 ```
 
 Repeat `--route KIND=ENGINE` for the kinds you want to assign. Unmentioned kinds inherit
@@ -101,10 +152,17 @@ Fallback behavior is deliberately different depending on whether you provide a l
 
 - Omit `--fallback` for a kind to snapshot the current automatic route order. If that
   whole chain is unavailable later, automatic mode still chooses another installed
-  engine deterministically.
+  engine deterministically. With a custom primary, the persisted explicit candidates
+  are that primary followed by the current configured primary and fallbacks with
+  duplicates removed; the persisted automatic mode then permits deterministic
+  any-installed rescue.
 - Provide a non-empty ordered list to make it strict and exhaustive. If neither the
   primary nor an engine in that list is installed, dispatch fails instead of silently
-  choosing another engine. An empty list is invalid.
+  choosing another engine. The list requires a matching `--route`, must not contain the
+  primary or duplicates, and cannot be empty.
+
+`run show` and `batch show` display the saved routes, fallback mode and actual engine
+selected for each task.
 
 ### Legacy single-task commands
 
@@ -113,6 +171,7 @@ The original single-task commands remain supported:
 ```bash
 uv run agentctl add --repo ~/dev/my-project --task "READMEのセットアップ手順を最新化して"
 uv run agentctl add --repo ~/dev/my-project --task "calc.py をレビューして" --kind review --risk read_only
+uv run agentctl dispatch --repo ~/dev/my-project --task "review the parser" --kind review --engine codex
 uv run agentctl dispatch --repo ~/dev/my-project --task "..." --json  # add + start in one shot; what CAGE calls
 
 uv run agentd run-task task-0001      # run one
@@ -123,6 +182,8 @@ uv run agentctl show task-0001
 ```
 
 Options for `add` and `dispatch`: `--kind`, `--engine`, `--risk`, `--priority`, `--parent`, `--base-ref`.
+An explicit `--engine` wins over the kind's automatic route for that task; immediate
+dispatch fails early if that engine is not installed.
 
 ## Runtime layout
 
@@ -148,9 +209,14 @@ do not create or manage Runs and Batches; use the MCP tools or `agentctl` for ne
 workflow orchestration.
 
 ```bash
+uv sync --extra api
 uv run agentapi run            # 127.0.0.1:8765
 cd ui && deno task dev
 ```
+
+Workflow member tasks can appear as ordinary flat tasks, but the API and UI do not
+manage workflow IDs, route snapshots, Run closing or Batch sealing. Point every process
+at the same runtime root. See the [UI README](ui/README.md) for frontend setup.
 
 ## Risk and access
 
