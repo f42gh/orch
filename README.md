@@ -1,194 +1,125 @@
 # agent-orchestrator
 
-`agent-orchestrator` is a local Python task runner that keeps a lightweight daemon alive and starts an isolated Claude Agent SDK worker for each queued task. It is designed for local development, research, and documentation tasks where workspace, session, logs, and permissions should be separated per task.
+A local orchestrator that hands coding work to whichever agent CLI suits it, runs each
+task in its own git worktree, and gives the result back for a human to review.
 
-The daemon is the resident process. Claude is invoked per task as a worker, with a dedicated `session_id`, git worktree, log directory, and risk policy.
+Claude Code is the orchestrator. `codex`, `grok`, `agy` (Antigravity) and `claude` are
+workers, reached over an MCP server. The task's *kind* picks the engine:
+
+| kind | engine | access |
+|---|---|---|
+| `implement` / `refactor` / `test` | codex | writes, inside the worktree |
+| `review` / `investigate` | grok | read-only |
+| `ui_verify` | antigravity | writes, inside the worktree |
+| (fallback for all of the above) | claude | |
+
+Anything not installed falls back automatically, so a missing engine degrades instead of
+failing. `docs/engine-capabilities.md` records what each CLI actually does, measured
+rather than taken from its documentation.
 
 ## Setup
 
 ```bash
 uv sync
+uv run agentctl engines   # what this machine has, and the routing table
 ```
 
-For real Claude worker execution, install the Claude SDK extra as well:
+Each CLI needs to be installed and authenticated on its own. Nothing here stores
+credentials.
+
+### Use it from Claude Code
 
 ```bash
-uv sync --extra claude
+claude mcp add orch -s user -- uv run --directory ~/dev/orch agentmcp
 ```
 
-Claude Code must also be authenticated and usable on the machine. This project imports the Python package as:
+Then `/orch <what you want done>`, or call the tools directly. See
+`docs/CLAUDE-PLAYBOOK.md` for the patterns worth knowing — fan-out, and having one engine
+implement while a different one reviews.
 
-```python
-from claude_code_sdk import ClaudeCodeOptions, query
-```
-
-The worker builds options with `cwd` and `allowed_tools`, and filters optional fields against the installed SDK signature so small SDK API differences fail less dramatically.
-
-## Runtime Directory
-
-By default, runtime state is stored under:
-
-```text
-~/agent-runtime/
-  tasks.db
-  logs/
-  repos/
-  workspaces/
-  sessions/
-```
-
-Override it with either `--runtime-root` or `AGENT_ORCHESTRATOR_RUNTIME_ROOT`.
-
-## Add A Task
+## Use it from the terminal
 
 ```bash
-uv run agentctl add \
-  --repo ~/dev/my-project \
-  --task "READMEのセットアップ手順を最新化して" \
-  --risk normal
-```
+uv run agentctl add --repo ~/dev/my-project --task "READMEのセットアップ手順を最新化して"
+uv run agentctl add --repo ~/dev/my-project --task "calc.py をレビューして" --kind review --risk read_only
 
-Options:
+uv run agentd run-task task-0001      # run one
+uv run agentd run --max-concurrency 2 # drain the queue
 
-```text
---repo        target git repository path
---task        task text
---risk        read_only / normal / high
---priority    low / normal / high
-```
-
-## Run The Daemon
-
-```bash
-uv run agentd run
-```
-
-For a single queued task, useful during development:
-
-```bash
-uv run agentd run --once
-```
-
-`agentctl daemon` is also available, but this README uses `agentd run` as the primary command.
-
-## Run The Local API
-
-The GUI talks to a local FastAPI server. Install the API extra and start it:
-
-```bash
-uv sync --extra api
-uv run agentapi run
-```
-
-By default it listens on `127.0.0.1:8765`.
-
-Useful endpoints:
-
-```text
-GET  /health
-GET  /tasks
-POST /tasks
-GET  /tasks/{task_id}
-POST /daemon/process-one
-GET  /tasks/{task_id}/logs/{agent|stdout|stderr}
-GET  /tasks/{task_id}/diff
-GET  /tasks/{task_id}/result
-```
-
-## Run The React UI
-
-The `ui/` directory contains a Deno + React + Vite app. Install Deno 2.9 or newer, start the Python API, then run:
-
-```bash
-cd ui
-deno task dev
-```
-
-For the Deno Desktop wrapper:
-
-```bash
-cd ui
-deno task desktop
-```
-
-The v1 desktop app assumes the Python API is already running and does not bundle Python, uv, or Claude credentials.
-
-## Check Status
-
-```bash
 uv run agentctl list
 uv run agentctl show task-0001
 ```
 
-Statuses:
+Options for `add`: `--kind`, `--engine`, `--risk`, `--priority`, `--parent`, `--base-ref`.
+
+## Runtime layout
 
 ```text
-queued
-running
-blocked
-failed
-succeeded
-needs_review
+~/agent-runtime/
+  tasks.db                     shared by the MCP server, daemon, API and UI
+  workspaces/<task_id>/repo    the git worktree, on branch agent/<engine>/<task_id>
+  logs/<task_id>/
+    agent.log stdout.log stderr.log
+    diff.patch result.json
 ```
 
-## Logs And Diff
+Override with `--runtime-root` or `AGENT_ORCHESTRATOR_RUNTIME_ROOT`.
 
-Each task writes files under:
+A finished task lands in `needs_review`, never `succeeded` — nothing marks its own work
+as done. `result.json` carries the summary, structured findings for reviews, changed
+files, diffstat, token usage, cost where the engine reports it, and warnings.
 
-```text
-~/agent-runtime/logs/{task_id}/
-  agent.log
-  stdout.log
-  stderr.log
-  diff.patch
-  result.json
+## HTTP API and UI
+
+```bash
+uv run agentapi run            # 127.0.0.1:8765
+cd ui && deno task dev
 ```
 
-`diff.patch` is captured with `git diff` after the worker exits. `result.json` includes task id, status, workspace path, diff path, summary, warnings, and whether human review is required.
+## Risk and access
 
-## Risk Policy
+`--risk` sets how much the task may do, independently of its kind:
 
-`read_only` allows reading and search-oriented tools. Edits, writes, commits, pushes, package installs, and deletes are not intended for this mode.
+- `read_only` — reads and searches; writes nothing.
+- `normal` — writes, but only inside the worktree.
+- `high` — planning only. The prompt forbids implementation and asks for analysis.
 
-`normal` allows coding-oriented tools such as read, edit, write, grep, glob, bash, test, lint, and format, subject to guardrails.
+Containment is four layers, because the CLI engines expose no in-process hook to block a
+tool call the way the Claude SDK does:
 
-`high` is planning-only in v0. The worker prompt explicitly forbids implementation, editing, and deletion, and asks only for investigation, impact analysis, implementation plan, risks, and open questions.
+1. the OS sandbox each engine offers (kernel-enforced via Seatbelt on macOS),
+2. engine deny rules for `git push`, `sudo` and similar,
+3. the git worktree, so the original checkout is never touched,
+4. a post-run scan of the diff and logs that annotates the result rather than blocking.
 
-## Guardrails
+Unsandboxed access requires an explicit opt-in in `routing.toml`; nothing reaches for a
+`--dangerously-*` flag on its own.
 
-The v0 guardrail detector blocks obvious dangerous command patterns, including:
+## Tuning the routing
 
-```text
-rm -rf /
-sudo
-chmod -R 777
-curl ... | bash
-wget ... | bash
-git push
-deploy
-.env
-id_rsa
-private_key
-secret
-token
+Optional `~/.config/agent-orchestrator/routing.toml`. Only the keys present are
+overridden:
+
+```toml
+[kinds.implement]
+engine = "grok"
+fallbacks = ["codex", "claude"]
+
+[risk.normal]
+max_turns = 60
+timeout_s = 2400
+
+[engines.codex]
+allow_dangerous = true   # removes the sandbox for codex; think before setting this
 ```
 
-This is intentionally a first line of defense, not a complete sandbox.
+## Limits
 
-## Known Limitations
-
-- This tool is not a fully automatic safe developer.
-- Generated changes must always be reviewed by a human.
-- `git push` and deploy are not performed by v0.
-- High risk tasks produce a plan only and do not implement changes.
-- Do not use this for workflows that require reading secrets or private keys.
-- Concurrent edits to the same file can still conflict.
-- SDK hook-level command blocking uses the Claude SDK `can_use_tool` hook in v0, but the detector is still intentionally simple.
-
-## Future Work
-
-- Add approval workflows for package upgrades, migrations, external API calls, and push operations.
-- Add file-level locks for concurrent tasks against the same repository.
-- Store structured SDK events in an events table.
-- Add SDK hook integration when the installed Claude Agent SDK exposes a stable hook API.
-- Add a richer router while keeping the daemon as the only resident process.
+- Generated changes always need a human to read them. `orch_adopt` returns a patch by
+  default and writes nothing.
+- Nothing commits, pushes or deploys.
+- `high` risk produces a plan, not an implementation.
+- Concurrent tasks are isolated while running, but two patches that edit the same
+  function still conflict at adoption time.
+- Only grok and claude report what a run cost; codex and antigravity do not, so the
+  totals are partial by construction.
