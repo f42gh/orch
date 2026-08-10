@@ -1,5 +1,7 @@
 # orch
 
+English | [日本語](README.ja.md)
+
 A local agent orchestrator that hands coding work to whichever agent CLI suits it, runs
 each task in its own git worktree, and gives the result back for a human to review.
 
