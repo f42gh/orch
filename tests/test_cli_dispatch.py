@@ -8,6 +8,8 @@ engine runs.
 from __future__ import annotations
 
 import json
+import signal
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -15,6 +17,7 @@ import pytest
 from agent_orchestrator.cli import main
 from agent_orchestrator.config import Config
 from agent_orchestrator.db import TaskStore
+from agent_orchestrator.dispatch import spawn_worker
 from agent_orchestrator.engines.base import Capabilities
 from agent_orchestrator.models import Engine, TaskStatus
 
@@ -113,3 +116,88 @@ def test_engines_json_reports_engines_and_routing(
     assert routing["implement"] == "codex"
     assert routing["review"] == "grok"
     assert "implement" in payload["kinds"]
+
+
+def test_spawn_worker_stops_the_child_when_pid_file_cannot_be_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = Config(runtime_root=tmp_path / "runtime")
+    killed: list[tuple[int, signal.Signals]] = []
+    waits: list[int] = []
+
+    class FakeProcess:
+        pid = 4321
+
+        def wait(self, timeout: int) -> int:
+            waits.append(timeout)
+            return 0
+
+    monkeypatch.setattr(
+        "agent_orchestrator.dispatch.subprocess.Popen",
+        lambda *args, **kwargs: FakeProcess(),
+    )
+    monkeypatch.setattr(
+        "agent_orchestrator.dispatch.os.killpg",
+        lambda pid, sig: killed.append((pid, sig)),
+    )
+    original_write_text = Path.write_text
+
+    def write_text(path: Path, data: str, **kwargs) -> int:
+        if path.name == "worker.pid":
+            raise OSError("pid write failed")
+        return original_write_text(path, data, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", write_text)
+
+    with pytest.raises(OSError, match="pid write failed"):
+        spawn_worker(config, "task-0001")
+
+    assert killed == [(4321, signal.SIGTERM)]
+    assert waits == [5]
+
+
+def test_spawn_worker_falls_back_to_process_signals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = Config(runtime_root=tmp_path / "runtime")
+    signals: list[str] = []
+    waits = 0
+
+    class FakeProcess:
+        pid = 4321
+
+        def wait(self, timeout: int) -> int:
+            nonlocal waits
+            waits += 1
+            if waits == 1:
+                raise subprocess.TimeoutExpired("agentd", timeout)
+            return 0
+
+        def terminate(self) -> None:
+            signals.append("terminate")
+
+        def kill(self) -> None:
+            signals.append("kill")
+
+    monkeypatch.setattr(
+        "agent_orchestrator.dispatch.subprocess.Popen",
+        lambda *args, **kwargs: FakeProcess(),
+    )
+    monkeypatch.setattr(
+        "agent_orchestrator.dispatch.os.killpg",
+        lambda pid, sig: (_ for _ in ()).throw(PermissionError("denied")),
+    )
+    original_write_text = Path.write_text
+
+    def write_text(path: Path, data: str, **kwargs) -> int:
+        if path.name == "worker.pid":
+            raise OSError("pid write failed")
+        return original_write_text(path, data, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", write_text)
+
+    with pytest.raises(OSError, match="pid write failed"):
+        spawn_worker(config, "task-0001")
+
+    assert signals == ["terminate", "kill"]
+    assert waits == 2

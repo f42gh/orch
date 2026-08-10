@@ -11,8 +11,14 @@ server in `mcp_server.py`.
 
 - `src/agent_orchestrator/router.py` — picks the engine from the task kind. The heart of
   the thing; change routing here, not in prompts.
+- `src/agent_orchestrator/workflows.py` — persists immutable Run/Batch route snapshots,
+  resolves their engines and records task membership. Runs accept later tasks until
+  closed; Batches never do.
 - `src/agent_orchestrator/engines/` — one adapter per CLI. Adapters are pure: they build
   an argv and parse bytes. No spawning, no database, no filesystem beyond declared files.
+- `src/agent_orchestrator/command_installer.py` and `templates/orch.md` — safely install
+  the Claude Code `/orch` workflow command. Never overwrite a different user command
+  without a backup and explicit force.
 - `src/agent_orchestrator/worker_cli.py` — everything process-shaped: spawning, live log
   capture, timeouts, writing results back.
 - `src/agent_orchestrator/mcp_server.py` — the MCP control plane. Must never print to
@@ -29,6 +35,10 @@ server in `mcp_server.py`.
 uv sync                       # install
 uv run pytest                 # tests
 uv run agentctl engines       # what this machine has, and the routing table
+uv run agentctl install-claude-command
+uv run agentctl run create --repo <path> --route implement=codex
+uv run agentctl run dispatch run-0001 --task "..." --kind implement
+uv run agentctl batch dispatch --repo <path> --route implement=codex --tasks-file tasks.json
 uv run agentctl add --repo <path> --task "..." --kind implement
 uv run agentctl dispatch --repo <path> --task "..." --json   # add + start; the JSON is CAGE's contract
 uv run agentd run-task <id>   # run one task
@@ -63,6 +73,10 @@ These are load-bearing. Changing one is a deliberate decision, not a refactor.
 - Nothing commits or pushes. Engines are told not to, deny rules block it, and
   `secrets_scan.py` looks for attempts afterwards.
 - Every engine is spawned with stdin closed and an explicit working directory.
+- Workflow routes choose the engine only. They must never change the access, prompt,
+  schema, risk policy or dangerous-access opt-in derived for the task.
+- A manual workflow fallback list is strict and exhaustive. Automatic fallback is used
+  only when the list is omitted; never silently escape a supplied list.
 
 ## Style
 

@@ -6,19 +6,41 @@ CLIs are workers. Nothing here is automatic — you decide what to delegate.
 ## The shape of every workflow
 
 ```
-orch_engines        see what this machine has
-orch_dispatch       queue work; returns a task_id immediately, does not wait
-orch_wait           join point once you have dispatched everything
-orch_diff           read what the engine actually did
-orch_adopt          take it, or don't
+orch_engines          see what this machine has and how auto routing starts
+confirm with user     Run or Batch, primary routes, and fallback mode/order
+orch_run_* / batch    persist a Run or submit one complete Batch
+orch_wait             join point once tasks have been dispatched
+orch_result + diff    read what every engine actually did
+orch_adopt            take the reviewed patch, or don't
 ```
 
-`orch_dispatch` returns in milliseconds. A real task takes minutes. Never sit in a poll
-loop on `orch_status` when `orch_wait` will block for you.
+Dispatch returns in milliseconds. A real task takes minutes. Never sit in a poll loop on
+`orch_status` when `orch_wait` will block for you. `orch_workflow_list` and
+`orch_workflow_show` let you find and inspect saved workflows after the calling session
+has ended.
 
-## Choosing a kind
+Inspect every dispatch response before waiting. A non-null `spawn_error` means that task
+was saved but its detached worker did not start; it remains `queued` for `agentd` to
+recover. Report it and do not include that ID in `orch_wait` until a daemon has started
+it, otherwise the wait can only time out.
 
-`kind` selects the engine; you rarely need to name an engine yourself.
+Before dispatching, split the request into tasks and make dependencies visible. Then ask
+the user to explicitly confirm:
+
+1. **Run or Batch.** A Run accepts later additions and is the right shape for dependent
+   stages. A Batch is one submission whose complete task set is already known and
+   independent.
+2. **Primary routes.** Choose an engine for every kind the plan uses. `agy` is accepted as
+   an input alias; stored values and responses use `antigravity`.
+3. **Fallbacks.** Omit a kind from `fallbacks` to snapshot the automatic order, or provide
+   a non-empty ordered list to make it strict and exhaustive. A strict list never falls
+   through to an unlisted installed engine, and an empty list is invalid.
+
+Do not dispatch while any of those choices is implicit.
+
+## Kinds and route safety
+
+When a route is not specified, `kind` supplies the automatic primary:
 
 | kind | goes to | use it when |
 |---|---|---|
@@ -32,60 +54,82 @@ loop on `orch_status` when `orch_wait` will block for you.
 `review` and `investigate` run read-only and cannot modify anything, so they are cheap to
 reach for and safe to run against a repository you care about.
 
-## Pattern: delegate one thing
+An explicit route changes the worker, not the safety policy. Kind and risk still control
+the prompt, structured output and write access. Missing kinds are materialized from the
+current routing table when a workflow is created, and the resulting route table is
+snapshotted so later `routing.toml` edits do not alter that workflow.
 
-Use when the work is well-specified and you would rather spend your own context on the
-review than on the typing.
+## Pattern: a persistent Run
+
+Use a Run when more work may arrive or you will choose later work after reviewing an
+earlier result. Routes cannot be edited after creation; close the Run once no more tasks
+will be added.
 
 ```
-orch_dispatch(repo="~/dev/thing", task="…", kind="implement")
-orch_wait(task_ids=["task-0007"], timeout_s=120)
-orch_diff(task_id="task-0007")
+run = orch_run_create(
+    repo="~/dev/thing",
+    routes={"implement": "codex", "review": "grok"},
+    fallbacks={"implement": ["claude", "grok"]},
+)
+impl = orch_run_dispatch(
+    run_id=run["workflow_id"], task="add the parser", kind="implement"
+)
+orch_wait(task_ids=[impl["task_id"]], timeout_s=120)
+orch_result(task_id=impl["task_id"]); orch_diff(task_id=impl["task_id"])
+orch_run_close(run_id=run["workflow_id"])
 ```
+
+Run membership and `parent_id` preserve orchestration history; they do not transfer
+uncommitted worktree changes. A returned branch points at the task's base commit because
+engines never commit. If a later worker needs the earlier code, pause for human review,
+adoption and commit, then dispatch it with that commit as `base_ref`.
 
 Write the task text the way you would brief a competent stranger: what to change, what
 not to change, and how to tell it worked. The engine sees the repository and your task
 text, and nothing of this conversation.
 
-## Pattern: fan out
+## Pattern: a one-shot Batch
 
-Independent pieces of work, running at once in separate worktrees.
+Use a Batch for a complete set of independent tasks. The entire request is validated
+before any task is queued; tasks cannot be added to the Batch later.
 
 ```
-a = orch_dispatch(repo=…, task="add the parser",     kind="implement")
-b = orch_dispatch(repo=…, task="add the serializer", kind="implement")
-c = orch_dispatch(repo=…, task="document the format", kind="implement")
-orch_wait(task_ids=[a, b, c], timeout_s=120)
+batch = orch_batch_dispatch(
+    repo="~/dev/thing",
+    routes={"implement": "codex"},
+    tasks=[
+        {"task": "add the parser", "kind": "implement"},
+        {"task": "add the serializer", "kind": "implement"},
+        {"task": "document the format", "kind": "implement"},
+    ],
+)
+orch_wait(task_ids=batch["task_ids"], timeout_s=120)
 ```
 
 Only fan out over pieces that do not touch the same files. Separate worktrees mean they
 cannot corrupt each other mid-run, but two patches that both edit one function will
 conflict when you adopt the second.
 
-## Pattern: implement, then review it with a different engine
+## Legacy pattern: direct single-task dispatch
 
-The most useful pattern here, and the reason the orchestrator is multi-vendor at all: the
-reviewer has no stake in the implementation and did not talk itself into the design.
+`orch_dispatch` remains supported for existing callers and one-off single tasks. It uses
+the kind route unless `engine` explicitly overrides it.
 
 ```
-impl = orch_dispatch(repo=…, task="…", kind="implement")          # codex
-orch_wait(task_ids=[impl])
-orch_dispatch(repo=…, kind="review", parent_id=impl,
-              task="Review the change on branch agent/codex/<id>: …")
+task = orch_dispatch(repo="~/dev/thing", task="…", kind="implement")
+orch_wait(task_ids=[task["task_id"]], timeout_s=120)
+orch_diff(task_id=task["task_id"])
 ```
 
-Point the reviewer at the branch, and tell it what you actually doubt. "Review this" gets
-you a summary; "check whether the retry loop can double-send" gets you an answer.
-
-## Pattern: two engines, same task
-
-When the approach is genuinely uncertain and you want to compare, not average.
+Direct dispatch is also still useful for comparing two engines on exactly the same task:
 
 ```
 a = orch_dispatch(repo=…, task=T, kind="implement", engine="codex")
-b = orch_dispatch(repo=…, task=T, kind="implement", engine="grok", parent_id=a)
-orch_wait(task_ids=[a, b], timeout_s=120)
-orch_diff(a); orch_diff(b)
+b = orch_dispatch(
+    repo=…, task=T, kind="implement", engine="grok", parent_id=a["task_id"]
+)
+orch_wait(task_ids=[a["task_id"], b["task_id"]], timeout_s=120)
+orch_diff(task_id=a["task_id"]); orch_diff(task_id=b["task_id"])
 ```
 
 This costs about twice as much, so keep it for decisions that are hard to reverse. Read
@@ -115,8 +159,9 @@ is usually where you should stop — report what the engine did and let the huma
 working tree. It refuses if that tree has uncommitted changes, and it never commits. Only
 reach for it after you have read the diff.
 
-The work also survives on its branch (`agent/<engine>/<task-id>`), so nothing is lost if
-you adopt nothing.
+The work survives in its retained worktree and `logs/<task-id>/diff.patch`. The named
+branch (`agent/<engine>/<task-id>`) identifies the worktree but does not itself contain
+the uncommitted changes.
 
 ## When something goes wrong
 
