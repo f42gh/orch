@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import pytest
 
 from agent_orchestrator.config import Config
 from agent_orchestrator.db import ADDED_COLUMNS, TaskStore
@@ -79,6 +82,24 @@ def test_migration_adds_every_new_column_once(tmp_path: Path) -> None:
     assert {name for name, _ in ADDED_COLUMNS} <= columns
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_concurrent_store_initialization_serializes_migration(
+    tmp_path: Path, legacy: bool
+) -> None:
+    config = Config(runtime_root=tmp_path)
+    if legacy:
+        write_v0_database(config.db_path)
+
+    with ThreadPoolExecutor(max_workers=12) as executor:
+        stores = list(executor.map(lambda _: TaskStore(config), range(12)))
+
+    assert len(stores) == 12
+    conn = sqlite3.connect(config.db_path)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+    conn.close()
+    assert {name for name, _ in ADDED_COLUMNS} <= columns
+
+
 def test_new_tasks_round_trip_engine_and_kind(tmp_path: Path) -> None:
     store = TaskStore(Config(runtime_root=tmp_path))
 
@@ -106,6 +127,19 @@ def test_new_tasks_round_trip_engine_and_kind(tmp_path: Path) -> None:
     assert updated.engine == Engine.CODEX
     assert updated.cost_usd == 0.125
     assert updated.exit_code == 0
+
+
+def test_task_ids_continue_past_four_digits(tmp_path: Path) -> None:
+    store = TaskStore(Config(runtime_root=tmp_path))
+    first = store.add_task(tmp_path, "old", Risk.NORMAL, Priority.NORMAL)
+    second = store.add_task(tmp_path, "newer", Risk.NORMAL, Priority.NORMAL)
+    with store._conn() as conn:  # noqa: SLF001 - establish the persisted boundary case
+        conn.execute("UPDATE tasks SET id = 'task-9999' WHERE id = ?", (first.id,))
+        conn.execute("UPDATE tasks SET id = 'task-10000' WHERE id = ?", (second.id,))
+
+    created = store.add_task(tmp_path, "next", Risk.NORMAL, Priority.NORMAL)
+
+    assert created.id == "task-10001"
 
 
 def test_claim_is_atomic(tmp_path: Path) -> None:

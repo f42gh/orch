@@ -1,6 +1,8 @@
 # Agent Orchestrator UI
 
-This is the Deno + React + Vite UI for the local Agent Orchestrator API.
+> **Legacy:** This Deno + React + Vite UI remains available for the original single-task
+> Agent Orchestrator API. It does not create or manage Runs and Batches. Use the MCP
+> tools or `agentctl` for new workflow orchestration.
 
 ## Requirements
 

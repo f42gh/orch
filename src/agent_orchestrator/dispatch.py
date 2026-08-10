@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -32,7 +33,7 @@ class Dispatched:
     task: Task
     branch: str
     engine: Engine
-    worker_pid: int
+    worker_pid: int | None
 
     def describe(self, config: Config) -> dict[str, object]:
         return {
@@ -82,8 +83,45 @@ def spawn_worker(config: Config, task_id: str) -> int:
         )
     finally:
         handle.close()
-    pid_path(config, task_id).write_text(str(process.pid), encoding="utf-8")
+    try:
+        pid_path(config, task_id).write_text(str(process.pid), encoding="utf-8")
+    except OSError:
+        # A detached worker without its pid file cannot be cancelled or inspected
+        # reliably. Stop the whole new session before reporting that spawn failed.
+        _stop_spawned_worker(process)
+        raise
     return process.pid
+
+
+def _stop_spawned_worker(process: subprocess.Popen[bytes]) -> None:
+    _signal_spawned_worker(process, signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+        return
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    _signal_spawned_worker(process, signal.SIGKILL)
+    try:
+        process.wait(timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
+def _signal_spawned_worker(
+    process: subprocess.Popen[bytes], requested: signal.Signals
+) -> None:
+    try:
+        os.killpg(process.pid, requested)
+        return
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        if requested is signal.SIGTERM:
+            process.terminate()
+        else:
+            process.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
 
 
 def _package_root() -> str:

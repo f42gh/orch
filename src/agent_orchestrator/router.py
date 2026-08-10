@@ -13,7 +13,15 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from agent_orchestrator.models import WRITING_KINDS, Engine, Risk, TaskKind
+from agent_orchestrator.models import (
+    WRITING_KINDS,
+    Engine,
+    FallbackMode,
+    Risk,
+    TaskKind,
+    WorkflowRoute,
+    WorkflowRouteOverride,
+)
 
 
 class AccessLevel(StrEnum):
@@ -194,6 +202,81 @@ def resolve_engine(
     # The table's own fallbacks are exhausted; take any installed engine rather than
     # refusing work. Ordering keeps the choice deterministic.
     return sorted(usable, key=lambda engine: engine.value)[0]
+
+
+def snapshot_workflow_routes(
+    table: RoutingTable = DEFAULT_TABLE,
+    overrides: Mapping[TaskKind, WorkflowRouteOverride] | None = None,
+) -> tuple[WorkflowRoute, ...]:
+    """Freeze a complete routing table for a run or batch.
+
+    Auto overrides put their custom primary ahead of the current configured chain.
+    Resolution still has the ordinary deterministic any-installed rescue, represented
+    by the persisted auto mode rather than by whichever engines happen to be installed
+    when the workflow is created.
+    """
+    supplied = overrides or {}
+    unknown = set(supplied) - set(TaskKind)
+    if unknown:
+        names = ", ".join(sorted(str(kind) for kind in unknown))
+        raise RoutingError(f"unknown workflow route kinds: {names}")
+
+    snapshots: list[WorkflowRoute] = []
+    for kind in TaskKind:
+        configured = table.routes.get(kind) or DEFAULT_ROUTES[kind]
+        override = supplied.get(kind)
+        if override is None:
+            primary = configured.engine
+            mode = FallbackMode.AUTO
+            candidates = configured.fallbacks
+        elif override.fallback_mode is FallbackMode.MANUAL:
+            primary = override.primary
+            mode = FallbackMode.MANUAL
+            candidates = override.fallbacks
+        else:
+            primary = override.primary
+            mode = FallbackMode.AUTO
+            candidates = (configured.engine, *configured.fallbacks)
+
+        fallbacks = tuple(
+            candidate
+            for index, candidate in enumerate(candidates)
+            if candidate != primary and candidate not in candidates[:index]
+        )
+        snapshots.append(
+            WorkflowRoute(
+                kind=kind,
+                primary=primary,
+                fallback_mode=mode,
+                fallbacks=fallbacks,
+            )
+        )
+    return tuple(snapshots)
+
+
+def resolve_workflow_engine(
+    route: WorkflowRoute,
+    available: Iterable[Engine],
+) -> Engine:
+    """Resolve against a persisted route without consulting current configuration."""
+    usable = set(available)
+    if not usable:
+        raise RoutingError("no coding agent CLI is available on this machine")
+
+    for candidate in (route.primary, *route.fallbacks):
+        if candidate in usable:
+            return candidate
+    if route.fallback_mode is FallbackMode.AUTO:
+        return sorted(usable, key=lambda engine: engine.value)[0]
+
+    configured = ", ".join(
+        engine.value for engine in (route.primary, *route.fallbacks)
+    )
+    available_names = ", ".join(sorted(engine.value for engine in usable))
+    raise RoutingError(
+        f"manual route for {route.kind.value} is exhausted "
+        f"(configured: {configured}; available: {available_names})"
+    )
 
 
 def resolve_access(kind: TaskKind, risk: Risk) -> AccessLevel:

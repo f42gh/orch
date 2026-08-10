@@ -22,6 +22,7 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -34,14 +35,31 @@ from agent_orchestrator.engines import probe_all
 from agent_orchestrator.models import (
     TERMINAL_STATUSES,
     Engine,
+    FallbackMode,
     Priority,
     Risk,
     Task,
     TaskKind,
     TaskStatus,
+    Workflow,
+    WorkflowDetails,
+    WorkflowRouteOverride,
+    WorkflowTaskRequest,
+    WorkflowType,
 )
 from agent_orchestrator.router import load_routing_table
 from agent_orchestrator.result import save_git_diff
+from agent_orchestrator.workflows import (
+    DispatchedBatch,
+    DispatchedWorkflowTask,
+    WorkflowError,
+    close_workflow,
+    create_run,
+    dispatch_batch,
+    dispatch_run,
+    list_workflows,
+    show_workflow,
+)
 
 #: Upper bound on `orch_wait`, so a stuck task cannot wedge the caller.
 MAX_WAIT_S = 120.0
@@ -49,6 +67,7 @@ POLL_INTERVAL_S = 1.0
 #: How much of a patch to inline before telling the caller to read the file instead.
 DEFAULT_DIFF_BYTES = 60_000
 LOG_TAIL_LINES = 40
+ENGINE_ALIASES = {"agy": Engine.ANTIGRAVITY.value}
 
 
 def _store(config: Config) -> TaskStore:
@@ -70,6 +89,163 @@ def _parse[T](enum: type[T], value: str | None, default: T | None = None) -> T |
         raise DispatchError(f"{value!r} is not one of: {allowed}") from None
 
 
+def _parse_engine(value: str | None) -> Engine | None:
+    if value is None:
+        return None
+    normalized = ENGINE_ALIASES.get(value.strip(), value.strip())
+    try:
+        return Engine(normalized)
+    except ValueError:
+        allowed = ", ".join([*(engine.value for engine in Engine), "agy"])
+        raise DispatchError(f"engine {value!r} is not one of: {allowed}") from None
+
+
+def _parse_workflow_routes(
+    routes: Mapping[str, str] | None,
+    fallbacks: Mapping[str, Sequence[str]] | None,
+) -> dict[TaskKind, WorkflowRouteOverride]:
+    primaries: dict[TaskKind, Engine] = {}
+    for raw_kind, raw_engine in (routes or {}).items():
+        try:
+            kind = TaskKind(raw_kind)
+        except ValueError:
+            allowed = ", ".join(kind.value for kind in TaskKind)
+            raise DispatchError(f"task kind {raw_kind!r} is not one of: {allowed}") from None
+        parsed = _parse_engine(raw_engine)
+        assert parsed is not None
+        primaries[kind] = parsed
+
+    manual: dict[TaskKind, tuple[Engine, ...]] = {}
+    for raw_kind, raw_chain in (fallbacks or {}).items():
+        try:
+            kind = TaskKind(raw_kind)
+        except ValueError:
+            allowed = ", ".join(item.value for item in TaskKind)
+            raise DispatchError(f"task kind {raw_kind!r} is not one of: {allowed}") from None
+        if kind not in primaries:
+            raise DispatchError(
+                f"fallbacks for {kind.value} require a matching explicit routes entry"
+            )
+        if isinstance(raw_chain, str) or not raw_chain:
+            raise DispatchError(f"fallbacks for {kind.value} must be a non-empty engine list")
+        parsed_chain: list[Engine] = []
+        for raw_engine in raw_chain:
+            if not isinstance(raw_engine, str) or not raw_engine.strip():
+                raise DispatchError(
+                    f"fallbacks for {kind.value} must contain non-empty engine names"
+                )
+            parsed = _parse_engine(raw_engine)
+            assert parsed is not None
+            parsed_chain.append(parsed)
+        manual[kind] = tuple(parsed_chain)
+
+    parsed_routes: dict[TaskKind, WorkflowRouteOverride] = {}
+    for kind, primary in primaries.items():
+        chain = manual.get(kind)
+        try:
+            parsed_routes[kind] = (
+                WorkflowRouteOverride(primary)
+                if chain is None
+                else WorkflowRouteOverride(primary, FallbackMode.MANUAL, chain)
+            )
+        except ValueError as exc:
+            raise DispatchError(f"route {kind.value}: {exc}") from None
+    return parsed_routes
+
+
+def _workflow_task_request(value: object, *, where: str) -> WorkflowTaskRequest:
+    if not isinstance(value, Mapping):
+        raise DispatchError(f"{where} must be an object")
+    allowed = {"task", "kind", "risk", "priority", "parent_id", "base_ref"}
+    unknown = sorted(str(key) for key in value if key not in allowed)
+    if unknown:
+        raise DispatchError(f"{where} has unknown fields: {', '.join(unknown)}")
+    task = value.get("task")
+    if not isinstance(task, str) or not task.strip():
+        raise DispatchError(f"{where}.task must be a non-empty string")
+    kind = _parse(TaskKind, value.get("kind", TaskKind.IMPLEMENT.value))
+    risk = _parse(Risk, value.get("risk", Risk.NORMAL.value))
+    priority = _parse(Priority, value.get("priority", Priority.NORMAL.value))
+    parent_id = value.get("parent_id")
+    base_ref = value.get("base_ref")
+    if parent_id is not None and not isinstance(parent_id, str):
+        raise DispatchError(f"{where}.parent_id must be a string or null")
+    if base_ref is not None and not isinstance(base_ref, str):
+        raise DispatchError(f"{where}.base_ref must be a string or null")
+    assert isinstance(kind, TaskKind)
+    assert isinstance(risk, Risk)
+    assert isinstance(priority, Priority)
+    return WorkflowTaskRequest(
+        task.strip(),
+        kind=kind,
+        risk=risk,
+        priority=priority,
+        parent_id=parent_id,
+        base_ref=base_ref,
+    )
+
+
+def _workflow_summary(workflow: Workflow) -> dict[str, Any]:
+    return {
+        "workflow_id": workflow.id,
+        "type": workflow.workflow_type.value,
+        "status": workflow.status.value,
+        "repo": str(workflow.repo_path),
+        "created_at": workflow.created_at.isoformat(),
+        "closed_at": workflow.closed_at.isoformat() if workflow.closed_at else None,
+    }
+
+
+def _workflow_details(config: Config, details: WorkflowDetails) -> dict[str, Any]:
+    routes = [
+        {
+            "kind": route.kind.value,
+            "primary": route.primary.value,
+            "fallback_mode": route.fallback_mode.value,
+            "fallbacks": [engine.value for engine in route.fallbacks],
+        }
+        for route in details.routes
+    ]
+    tasks = []
+    for membership, task in zip(details.memberships, details.tasks, strict=True):
+        tasks.append({**_serialize(config, task), "ordinal": membership.ordinal})
+    return {
+        **_workflow_summary(details.workflow),
+        "routes": routes,
+        "task_ids": [task["task_id"] for task in tasks],
+        "tasks": tasks,
+    }
+
+
+def _workflow_dispatch(config: Config, item: DispatchedWorkflowTask) -> dict[str, Any]:
+    return {
+        **item.dispatched.describe(config),
+        "workflow_id": item.workflow.id,
+        "ordinal": item.membership.ordinal,
+        "task": item.task.task,
+        "spawn_error": item.spawn_error,
+    }
+
+
+def _workflow_batch(
+    config: Config, store: TaskStore, result: DispatchedBatch
+) -> dict[str, Any]:
+    details = show_workflow(store, result.workflow.id)
+    tasks = [_workflow_dispatch(config, item) for item in result.dispatched]
+    return {
+        **_workflow_details(config, details),
+        "task_ids": [task["task_id"] for task in tasks],
+        "tasks": tasks,
+    }
+
+
+def _workflow_call[T](call: Any, *args: Any, **kwargs: Any) -> T:
+    try:
+        return call(*args, **kwargs)
+    except (WorkflowError, ValueError) as exc:
+        raise DispatchError(str(exc)) from None
+
+
 def _serialize(config: Config, task: Task) -> dict[str, Any]:
     log_dir = config.logs_dir / task.id
     return {
@@ -78,11 +254,13 @@ def _serialize(config: Config, task: Task) -> dict[str, Any]:
         "kind": task.kind.value,
         "engine": task.engine.value if task.engine else None,
         "risk": task.risk.value,
+        "priority": task.priority.value,
         "task": task.task,
         "repo": str(task.repo_path),
         "workspace": str(task.workspace_path) if task.workspace_path else None,
         "branch": task.branch_name,
         "parent_id": task.parent_id,
+        "base_ref": task.base_ref,
         "cost_usd": task.cost_usd,
         "exit_code": task.exit_code,
         "created_at": task.created_at.isoformat(),
@@ -102,15 +280,21 @@ def _tail(path: Path, lines: int = LOG_TAIL_LINES) -> str:
 def build_server(config: Config) -> MCPServer:
     server = MCPServer(
         name="orch",
-        version="0.2.0",
+        version="0.3.0",
         instructions=(
             "Delegate coding work to other agent CLIs (codex, grok, antigravity, claude). "
             "Each task runs in its own git worktree, so several can run at once without "
-            "colliding. Call orch_engines first to see what this machine has. Dispatch is "
-            "asynchronous: orch_dispatch returns immediately, then poll orch_status or "
-            "block on orch_wait. Always read orch_diff before adopting anything — the "
+            "colliding. Call orch_engines first, then confirm Run versus Batch and the "
+            "primary/fallback routes with the user. Use orch_run_create and "
+            "orch_run_dispatch when later work may be added; use orch_batch_dispatch for "
+            "one complete independent task set. Dispatch is asynchronous: tools return "
+            "immediately, then poll orch_status or block on orch_wait. Inspect every "
+            "dispatch response for spawn_error; that task is still queued and must not "
+            "be waited on until an external daemon starts it. Always read "
+            "orch_result and orch_diff before adopting anything — the "
             "engines are told not to commit, and nothing reaches the real repository "
-            "unless you call orch_adopt with strategy='apply'."
+            "unless you call orch_adopt with strategy='apply'. The input alias agy always "
+            "serializes as antigravity. Legacy orch_dispatch remains supported."
         ),
     )
 
@@ -158,7 +342,7 @@ def build_server(config: Config) -> MCPServer:
             kind=_parse(TaskKind, kind, TaskKind.IMPLEMENT),
             risk=_parse(Risk, risk, Risk.NORMAL),
             priority=_parse(Priority, priority, Priority.NORMAL),
-            engine=_parse(Engine, engine) if engine else None,
+            engine=_parse_engine(engine),
             parent_id=parent_id,
             base_ref=base_ref,
         )
@@ -341,6 +525,122 @@ def build_server(config: Config) -> MCPServer:
             "repo": str(repo),
             "note": "staged in the working tree; review and commit it yourself",
         }
+
+    @server.tool(
+        description=(
+            "Create an open persistent Run for one repository. routes maps task kinds to "
+            "primary engines. fallbacks maps the same explicitly routed kinds to strict, "
+            "non-empty ordered fallback lists; omit a kind for snapshotted automatic "
+            "fallbacks. Inputs accept agy, while output uses antigravity."
+        )
+    )
+    def orch_run_create(
+        repo: str,
+        routes: dict[str, str] | None = None,
+        fallbacks: dict[str, list[str]] | None = None,
+    ) -> dict[str, Any]:
+        store = _store(config)
+        overrides = _parse_workflow_routes(routes, fallbacks)
+        details = _workflow_call(create_run, config, store, repo=repo, routes=overrides)
+        return _workflow_details(config, details)
+
+    @server.tool(
+        description=(
+            "Add and start one task under an open Run. The immutable route snapshot "
+            "selects its engine. Returns immediately; inspect spawn_error, then use "
+            "orch_wait only after a worker has started."
+        )
+    )
+    def orch_run_dispatch(
+        run_id: str,
+        task: str,
+        kind: str = "implement",
+        risk: str = "normal",
+        priority: str = "normal",
+        parent_id: str | None = None,
+        base_ref: str | None = None,
+    ) -> dict[str, Any]:
+        parsed_kind = _parse(TaskKind, kind, TaskKind.IMPLEMENT)
+        parsed_risk = _parse(Risk, risk, Risk.NORMAL)
+        parsed_priority = _parse(Priority, priority, Priority.NORMAL)
+        assert isinstance(parsed_kind, TaskKind)
+        assert isinstance(parsed_risk, Risk)
+        assert isinstance(parsed_priority, Priority)
+        dispatched = _workflow_call(
+            dispatch_run,
+            config,
+            _store(config),
+            run_id=run_id,
+            task=task,
+            kind=parsed_kind,
+            risk=parsed_risk,
+            priority=parsed_priority,
+            parent_id=parent_id,
+            base_ref=base_ref,
+        )
+        return _workflow_dispatch(config, dispatched)
+
+    @server.tool(
+        description=(
+            "Close an open Run to further additions. Tasks already running continue and "
+            "remain available through the normal task inspection tools."
+        )
+    )
+    def orch_run_close(run_id: str) -> dict[str, Any]:
+        store = _store(config)
+        details = _workflow_call(close_workflow, store, run_id)
+        return _workflow_details(config, details)
+
+    @server.tool(
+        description=(
+            "Validate, persist, and start one sealed Batch of independent tasks. tasks is "
+            "a non-empty ordered array of objects with task plus optional kind, risk, "
+            "priority, parent_id, and base_ref. routes/fallbacks match orch_run_create. "
+            "The response includes ordered task_ids for orch_wait and a per-task "
+            "spawn_error when a member remained queued instead of starting."
+        )
+    )
+    def orch_batch_dispatch(
+        repo: str,
+        tasks: list[dict[str, Any]],
+        routes: dict[str, str] | None = None,
+        fallbacks: dict[str, list[str]] | None = None,
+    ) -> dict[str, Any]:
+        if not tasks:
+            raise DispatchError("a batch must contain at least one task")
+        requests = tuple(
+            _workflow_task_request(task, where=f"tasks[{index}]")
+            for index, task in enumerate(tasks)
+        )
+        overrides = _parse_workflow_routes(routes, fallbacks)
+        store = _store(config)
+        batch = _workflow_call(
+            dispatch_batch,
+            config,
+            store,
+            repo=repo,
+            tasks=requests,
+            routes=overrides,
+        )
+        return _workflow_batch(config, store, batch)
+
+    @server.tool(
+        description="List saved Run and Batch workflows; pass run or batch to filter."
+    )
+    def orch_workflow_list(workflow_type: str | None = None) -> dict[str, Any]:
+        parsed = _parse(WorkflowType, workflow_type) if workflow_type else None
+        workflows = _workflow_call(list_workflows, _store(config), parsed)
+        return {"workflows": [_workflow_summary(workflow) for workflow in workflows]}
+
+    @server.tool(
+        description=(
+            "Show a Run or Batch by workflow id, including its ordered full route snapshot "
+            "and member tasks."
+        )
+    )
+    def orch_workflow_show(workflow_id: str) -> dict[str, Any]:
+        details = _workflow_call(show_workflow, _store(config), workflow_id)
+        return _workflow_details(config, details)
 
     return server
 
