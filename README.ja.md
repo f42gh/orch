@@ -60,8 +60,11 @@ MCP サーバーを登録し、リポジトリに含まれる `/orch` コマン�
 
 ```bash
 claude mcp add orch -s user -- uv run --directory /absolute/path/to/orch agentmcp
-uv run agentctl install-claude-command
+uv run agentctl install-claude-command --locale ja
 ```
+
+`--locale ja` は、入力候補の説明と引数ヒントだけでなく、確認や最終報告も日本語化する。英語版を
+使う場合は `--locale` を省略するか、`--locale en` を指定する。
 
 新しい Claude Code セッションを開始し、`/orch <やってほしいこと>` と入力する。`/orch` は何も
 実行する前に、利用可能なエンジン、Run/Batch の案、割り当てを提示し、確認を待つ。MCP ツールを
@@ -76,7 +79,8 @@ uv run agentctl install-claude-command
 
 デフォルトのインストール先は `~/.claude/commands/orch.md`。内容が同一なら何も変更しない。
 別内容の既存コマンドは `--force` なしでは上書きせず、強制置換時も一意な名前のバックアップを
-先に作成する。別の場所には `--target PATH` でインストールできる。
+先に作成する。別の場所には `--target PATH` でインストールできる。テンプレートの対応ロケールは
+英語の `en`（デフォルト）と日本語の `ja`。
 
 ## ターミナルから使う
 

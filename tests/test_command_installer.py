@@ -44,6 +44,21 @@ def test_identical_command_is_a_no_op(tmp_path: Path) -> None:
     assert after.st_ino == before.st_ino
 
 
+def test_japanese_template_can_be_installed(tmp_path: Path) -> None:
+    target = tmp_path / "orch.md"
+
+    result = install_command(target, locale="ja")
+
+    assert result.changed is True
+    assert target.read_text(encoding="utf-8") == command_template("ja")
+    assert "argument-hint: <依頼する作業>" in command_template("ja")
+
+
+def test_unknown_template_locale_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(CommandInstallError, match="unsupported command locale"):
+        install_command(tmp_path / "orch.md", locale="fr")
+
+
 def test_different_command_refuses_without_force(tmp_path: Path) -> None:
     target = tmp_path / "orch.md"
     target.write_text("my command\n", encoding="utf-8")

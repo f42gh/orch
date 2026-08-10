@@ -54,3 +54,18 @@ def test_template_requires_confirmation_and_complete_review_flow() -> None:
     assert "orch_result" in template
     assert "orch_diff" in template
     assert "orch_adopt" in template
+
+
+def test_japanese_template_localizes_the_complete_workflow() -> None:
+    template = command_template("ja")
+    frontmatter = template.split("---", 2)[1]
+
+    assert "description: orchワークフロー" in frontmatter
+    assert "argument-hint: <依頼する作業>" in frontmatter
+    assert "$ARGUMENTS" in template
+    assert "ユーザーへの説明、確認、最終報告は日本語で行う" in template
+    assert "明示的な確認" in template
+    assert "コミットされていない worktree の変更を引き継がない" in template
+    assert "spawn_error" in template
+    for tool in REQUIRED_TOOLS:
+        assert f"mcp__orch__{tool}" in frontmatter

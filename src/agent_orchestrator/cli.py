@@ -7,7 +7,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
-from agent_orchestrator.command_installer import CommandInstallError, install_command
+from agent_orchestrator.command_installer import (
+    SUPPORTED_COMMAND_LOCALES,
+    CommandInstallError,
+    install_command,
+)
 from agent_orchestrator.config import Config, load_config
 from agent_orchestrator.daemon import run_daemon
 from agent_orchestrator.db import TaskStore
@@ -187,6 +191,12 @@ def build_parser() -> argparse.ArgumentParser:
         "install-claude-command", help="install the bundled /orch command for Claude Code"
     )
     install_parser.add_argument("--target", default=None, help="override ~/.claude/commands/orch.md")
+    install_parser.add_argument(
+        "--locale",
+        choices=SUPPORTED_COMMAND_LOCALES,
+        default="en",
+        help="language for the command template (default: en)",
+    )
     install_parser.add_argument(
         "--force", action="store_true", help="back up and replace a different existing file"
     )
@@ -714,7 +724,11 @@ def _handle_batch(config: Config, store: TaskStore, args: argparse.Namespace) ->
 
 def _handle_install(args: argparse.Namespace) -> None:
     try:
-        result = install_command(Path(args.target) if args.target else None, force=args.force)
+        result = install_command(
+            Path(args.target) if args.target else None,
+            locale=args.locale,
+            force=args.force,
+        )
     except CommandInstallError as exc:
         raise SystemExit(str(exc)) from None
     if not result.changed:

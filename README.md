@@ -67,6 +67,9 @@ claude mcp add orch -s user -- uv run --directory /absolute/path/to/orch agentmc
 uv run agentctl install-claude-command
 ```
 
+Pass `--locale ja` to install the Japanese command template instead. It localizes the
+autocomplete description, argument hint, confirmation prompts, and final report.
+
 Start a new Claude Code session, then run `/orch <what you want done>`. Before dispatching
 anything, `/orch` shows the available engines, proposes a Run or Batch and its
 assignments, and waits for your confirmation. You can also call the MCP tools directly.
@@ -83,7 +86,7 @@ having one engine implement while a different one reviews.
 The default target is `~/.claude/commands/orch.md`. An identical file is left alone. A
 different existing command is never overwritten unless you pass `--force`; forced
 replacement first writes a uniquely named backup. Use `--target PATH` to install
-somewhere else.
+somewhere else. The supported template locales are `en` (default) and `ja`.
 
 ## Use it from the terminal
 

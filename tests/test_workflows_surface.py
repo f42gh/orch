@@ -82,12 +82,20 @@ def test_cli_parser_exposes_documented_commands_and_positional_run_id() -> None:
         ["batch", "dispatch", "--repo", "/repo", "--tasks-file", "-"]
     )
     install = parser.parse_args(
-        ["install-claude-command", "--target", "/tmp/orch.md", "--force"]
+        [
+            "install-claude-command",
+            "--target",
+            "/tmp/orch.md",
+            "--locale",
+            "ja",
+            "--force",
+        ]
     )
 
     assert (run.run_id, run.parent) == ("run-0001", "task-0001")
     assert batch.tasks_file == "-"
     assert install.force is True
+    assert install.locale == "ja"
     assert parser.parse_args(["start"]).command == "start"
     assert parser.parse_args(["run", "create", "--repo", "/repo"]).run_command == "create"
     assert parser.parse_args(["run", "list"]).run_command == "list"
@@ -481,7 +489,8 @@ def test_legacy_cli_and_mcp_accept_agy_but_serialize_canonical_name(
 def test_cli_install_command_wiring(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = tmp_path / "commands" / "orch.md"
 
-    main(["install-claude-command", "--target", str(target)])
+    main(["install-claude-command", "--target", str(target), "--locale", "ja"])
 
     assert target.exists()
+    assert "argument-hint: <依頼する作業>" in target.read_text(encoding="utf-8")
     assert f"installed Claude command: {target}" in capsys.readouterr().out

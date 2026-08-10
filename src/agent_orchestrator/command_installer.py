@@ -12,6 +12,11 @@ from pathlib import Path
 
 
 COMMAND_RELATIVE_PATH = Path(".claude/commands/orch.md")
+COMMAND_TEMPLATE_NAMES = {
+    "en": "orch.md",
+    "ja": "orch.ja.md",
+}
+SUPPORTED_COMMAND_LOCALES = tuple(COMMAND_TEMPLATE_NAMES)
 
 
 class CommandInstallError(RuntimeError):
@@ -29,14 +34,23 @@ def default_command_path() -> Path:
     return Path.home() / COMMAND_RELATIVE_PATH
 
 
-def command_template() -> str:
-    template = resources.files("agent_orchestrator").joinpath("templates", "orch.md")
+def command_template(locale: str = "en") -> str:
+    try:
+        template_name = COMMAND_TEMPLATE_NAMES[locale]
+    except KeyError:
+        supported = ", ".join(SUPPORTED_COMMAND_LOCALES)
+        raise CommandInstallError(
+            f"unsupported command locale {locale!r}; choose one of: {supported}"
+        ) from None
+    template = resources.files("agent_orchestrator").joinpath("templates", template_name)
     return template.read_text(encoding="utf-8")
 
 
-def install_command(target: Path | None = None, *, force: bool = False) -> InstallResult:
+def install_command(
+    target: Path | None = None, *, locale: str = "en", force: bool = False
+) -> InstallResult:
     path = (target or default_command_path()).expanduser()
-    content = command_template().encode("utf-8")
+    content = command_template(locale).encode("utf-8")
     backup_path: Path | None = None
     existing_mode: int | None = None
 
