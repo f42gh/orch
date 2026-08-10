@@ -6,19 +6,24 @@
 各タスクは専用の git worktree で実行され、結果は人間がレビューするために返される。
 
 Claude Code がオーケストレーターとなり、`codex`・`grok`・`agy`(Antigravity)・`claude` が
-MCP サーバー経由で呼び出されるワーカーになる。タスクの *kind* は自動選択時の
-デフォルトエンジンを決める:
+MCP サーバー経由で呼び出されるワーカーになる。Run・Batch・単一タスクのいずれでも、利用ごとに
+エンジンの割り当てを選べる。kind を自動ルーティングのままにした場合は、次のデフォルトを使う:
 
-| kind | engine | アクセス |
+| kind | 自動ルート | アクセス |
 |---|---|---|
-| `implement` / `refactor` / `test` | codex | 書き込み可(worktree 内のみ) |
-| `review` / `investigate` | grok | 読み取り専用 |
-| `ui_verify` | antigravity | 書き込み可(worktree 内のみ) |
-| (上記すべてのフォールバック) | claude | |
+| `implement` | codex → claude → grok | 書き込み可(worktree 内のみ) |
+| `refactor` | codex → grok → claude | 書き込み可(worktree 内のみ) |
+| `test` | codex → claude → grok | 書き込み可(worktree 内のみ) |
+| `review` | grok → codex → claude | 読み取り専用 |
+| `investigate` | grok → claude → codex | 読み取り専用 |
+| `ui_verify` | antigravity → claude | 書き込み可(worktree 内のみ) |
 
-未インストールのエンジンには自動でフォールバックするため、エンジンが欠けていても失敗せず
-縮退動作になる。各 CLI が実際に何をするかは、ドキュメントの記述ではなく実測に基づいて
-`docs/engine-capabilities.md` に記録している。
+自動モードでは、保存された候補が尽きても別のインストール済みエンジンを決定的な順で選ぶため、
+少なくとも1つのワーカー CLI が利用できれば処理を続けられる。各 CLI が実際に何をするかは、
+ドキュメントではなく実測に基づく[エンジン能力表](docs/engine-capabilities.md)に記録している。
+
+この表は固定割り当てではなくデフォルトである。対話式の `agentctl start`、単一タスクへの厳密な
+`--engine` 指定、または Run/Batch のルート表で自由に上書きできる。
 
 新しいワークフローでは、このデフォルトを明示的なルート表で上書きできる。実行を始める前に
 一度だけ割り当てを決める:
@@ -37,6 +42,9 @@ Run が保存するのはルートとタスク履歴であり、あるタスク�
 
 ## セットアップ
 
+必要なものは Python 3.12 以上、`uv`、Git、およびインストール・認証済みのワーカー CLI が
+少なくとも1つ。Claude Code は MCP 経由で利用する場合だけ必要になる。
+
 ```bash
 git clone https://github.com/f42gh/orch
 cd orch
@@ -48,20 +56,23 @@ uv run agentctl engines   # このマシンにあるエンジンとルーティ�
 
 ### Claude Code から使う
 
-```bash
-claude mcp add orch -s user -- uv run --directory ~/dev/orch agentmcp
-```
-
-あとは `/orch <やってほしいこと>` と入力するか、ツールを直接呼び出す。
-ファンアウトや、あるエンジンに実装させて別のエンジンにレビューさせるパターンなど、
-知っておくと便利な使い方は `docs/CLAUDE-PLAYBOOK.md` を参照。
-
-Claude Code から Run/Batch の確認手順を確実に使うには、このリポジトリに含まれる
-`/orch` コマンドテンプレートをインストールする:
+MCP サーバーを登録し、リポジトリに含まれる `/orch` コマンドテンプレートをインストールする:
 
 ```bash
+claude mcp add orch -s user -- uv run --directory /absolute/path/to/orch agentmcp
 uv run agentctl install-claude-command
 ```
+
+新しい Claude Code セッションを開始し、`/orch <やってほしいこと>` と入力する。`/orch` は何も
+実行する前に、利用可能なエンジン、Run/Batch の案、割り当てを提示し、確認を待つ。MCP ツールを
+直接呼び出すこともできる。`/absolute/path/to/orch` はこの checkout の絶対パスに置き換える。
+インストーラが配置するのはコマンドファイルだけで、MCP サーバーの登録は行わない。また、
+コマンドは上記の登録名 `orch` を前提とする。
+
+直接使うツールは、Run 用の `orch_run_create`・`orch_run_dispatch`・`orch_run_close`、Batch 用の
+`orch_batch_dispatch`、再開・確認用の `orch_workflow_list`・`orch_workflow_show`。ファンアウトや、
+あるエンジンに実装させて別のエンジンにレビューさせるパターンは
+[Claude Code playbook](docs/CLAUDE-PLAYBOOK.md)を参照。
 
 デフォルトのインストール先は `~/.claude/commands/orch.md`。内容が同一なら何も変更しない。
 別内容の既存コマンドは `--force` なしでは上書きせず、強制置換時も一意な名前のバックアップを
@@ -69,25 +80,59 @@ uv run agentctl install-claude-command
 
 ## ターミナルから使う
 
+今回の利用に合わせて対話形式で割り当てを選ぶには、次を実行する:
+
+```bash
+uv run agentctl start
+```
+
+ウィザードはインストール済みエンジンを検出し、永続 Run と一回限りの Batch のどちらにするかを
+尋ね、自動ルートを表示したうえで、開始前に kind ごとの割り当てを上書きできる。TTY 専用で、
+Run を選んだ場合は空の Run を作成して `workflow_id` を表示する。最初のタスクは下記の
+`run dispatch` で追加する。スクリプトや再現可能な操作には、以下の明示形式を使う。
+
 後から作業を追加する場合は永続 Run を作る:
 
 ```bash
 uv run agentctl run create --repo ~/dev/my-project \
-  --route implement=codex \
-  --fallback implement=claude,grok
-uv run agentctl run dispatch run-0001 --task "パーサーを追加して" --kind implement
-uv run agentctl run show run-0001
-uv run agentctl run close run-0001
+  --route implement=grok \
+  --fallback implement=codex,claude
+
+# create の出力にある workflow_id を使う。例: run-0007
+uv run agentctl run dispatch run-0007 --task "パーサーを追加して" --kind implement
+uv run agentctl run show run-0007
+uv run agentctl run list
+uv run agentctl run close run-0007
 ```
 
 独立した全タスクが分かっている場合は、一回限りの Batch で投入する。tasks file はタスク仕様の
 JSON 配列で、`--tasks-file -` を指定すると標準入力から読み込む。
 
+```json
+[
+  {
+    "task": "パーサーを追加して",
+    "kind": "implement",
+    "risk": "normal",
+    "priority": "high",
+    "base_ref": "main"
+  },
+  {
+    "task": "認証フローをレビューして",
+    "kind": "review"
+  }
+]
+```
+
+タスクで使えるキーは `task`、`kind`、`risk`、`priority`、`parent_id`、`base_ref`。
+エンジンはワークフロー側の `--route` で選び、Batch のタスクオブジェクトに `engine` は書けない。
+
 ```bash
 uv run agentctl batch dispatch --repo ~/dev/my-project \
-  --route implement=codex \
-  --fallback implement=claude,grok \
+  --route implement=grok \
+  --fallback implement=codex,claude \
   --tasks-file tasks.json
+uv run agentctl batch list
 ```
 
 割り当てる kind ごとに `--route KIND=ENGINE` を繰り返す。省略した kind は、ワークフロー作成時の
@@ -98,9 +143,14 @@ uv run agentctl batch dispatch --repo ~/dev/my-project \
 
 - kind の `--fallback` を省略すると、その時点の自動ルート順を保存する。後の実行時にその
   候補がすべて利用不能なら、自動モードは別のインストール済みエンジンを決定的な順で選ぶ。
+  primary を上書きした場合、保存する明示候補はその primary、作成時の設定済み primary と
+  fallback（重複除去済み）の順になり、同時に保存する自動モードが最後の任意エンジン選択を許す。
 - 空でない順序付きリストを指定すると、その順序だけを厳密かつ網羅的に使う。primary と
   リスト内のどのエンジンもインストールされていなければ、別のエンジンを暗黙に選ばず失敗する。
-  空リストは無効。
+  同じ kind の `--route` が必要で、primary 自体や重複を含めることはできず、空リストも無効。
+
+`run show` と `batch show` では、保存されたルート、fallback mode、各タスクで実際に選ばれた
+エンジンを確認できる。
 
 ### 従来の単一タスクコマンド
 
@@ -109,6 +159,7 @@ uv run agentctl batch dispatch --repo ~/dev/my-project \
 ```bash
 uv run agentctl add --repo ~/dev/my-project --task "READMEのセットアップ手順を最新化して"
 uv run agentctl add --repo ~/dev/my-project --task "calc.py をレビューして" --kind review --risk read_only
+uv run agentctl dispatch --repo ~/dev/my-project --task "パーサーをレビューして" --kind review --engine codex
 uv run agentctl dispatch --repo ~/dev/my-project --task "..." --json  # add と開始を一発で。CAGE が呼ぶのはこれ
 
 uv run agentd run-task task-0001      # 1 件実行
@@ -119,6 +170,8 @@ uv run agentctl show task-0001
 ```
 
 `add` と `dispatch` のオプション: `--kind`、`--engine`、`--risk`、`--priority`、`--parent`、`--base-ref`。
+明示した `--engine` はそのタスクの kind による自動ルートより優先され、即時 dispatch では
+そのエンジンが未インストールならタスク作成前に失敗する。
 
 ## ランタイムの構成
 
@@ -144,9 +197,14 @@ Run と Batch の作成・管理には対応しないため、新しいワーク
 MCP ツールまたは `agentctl` を使う。
 
 ```bash
+uv sync --extra api
 uv run agentapi run            # 127.0.0.1:8765
 cd ui && deno task dev
 ```
+
+ワークフロー内のタスクが通常の flat task として表示されることはあるが、workflow ID、route
+snapshot、Run の close、Batch の seal は管理しない。すべてのプロセスで同じ runtime root を
+指定する。フロントエンドの詳細は [UI README](ui/README.md) を参照。
 
 ## リスクとアクセス制御
 
