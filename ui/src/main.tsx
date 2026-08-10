@@ -12,7 +12,7 @@ import {
   RefreshCw,
   TerminalSquare,
 } from "lucide-react";
-import { api, ApiError, Priority, Risk, Task } from "./api.ts";
+import { api, ApiError, Engine, Priority, Risk, Task, TaskKind } from "./api.ts";
 import "./styles.css";
 
 type ArtifactState = {
@@ -33,6 +33,18 @@ const emptyArtifacts: ArtifactState = {
 
 const risks: Risk[] = ["read_only", "normal", "high"];
 const priorities: Priority[] = ["low", "normal", "high"];
+const kinds: TaskKind[] = [
+  "implement",
+  "refactor",
+  "test",
+  "review",
+  "investigate",
+  "ui_verify",
+];
+
+// "auto" means let the router pick from the kind, which is the normal case.
+const engineChoices = ["auto", "codex", "grok", "antigravity", "claude"] as const;
+type EngineChoice = typeof engineChoices[number];
 
 function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -41,6 +53,8 @@ function App() {
   const [taskText, setTaskText] = useState("");
   const [risk, setRisk] = useState<Risk>("normal");
   const [priority, setPriority] = useState<Priority>("normal");
+  const [kind, setKind] = useState<TaskKind>("implement");
+  const [engine, setEngine] = useState<EngineChoice>("auto");
   const [artifacts, setArtifacts] = useState<ArtifactState>(emptyArtifacts);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -104,6 +118,8 @@ function App() {
         task: trimmedTask,
         risk,
         priority,
+        kind,
+        engine: engine === "auto" ? null : engine as Engine,
       });
       setRepo("");
       setTaskText("");
@@ -138,7 +154,7 @@ function App() {
       <header className="topbar">
         <div>
           <h1>Agent Orchestrator</h1>
-          <p>Local task queue for isolated Claude workers</p>
+          <p>codex / grok / antigravity / claude, each in its own git worktree</p>
         </div>
         <div className="topbar-actions">
           <button className="icon-button" title="Refresh tasks" onClick={() => void loadTasks()}>
@@ -183,6 +199,26 @@ function App() {
             </label>
             <div className="field-row">
               <label>
+                Kind
+                <select
+                  value={kind}
+                  onChange={(event) => setKind(event.target.value as TaskKind)}
+                >
+                  {kinds.map((item) => <option key={item}>{item}</option>)}
+                </select>
+              </label>
+              <label>
+                Engine
+                <select
+                  value={engine}
+                  onChange={(event) => setEngine(event.target.value as EngineChoice)}
+                >
+                  {engineChoices.map((item) => <option key={item}>{item}</option>)}
+                </select>
+              </label>
+            </div>
+            <div className="field-row">
+              <label>
                 Risk
                 <select value={risk} onChange={(event) => setRisk(event.target.value as Risk)}>
                   {risks.map((item) => <option key={item}>{item}</option>)}
@@ -220,7 +256,12 @@ function App() {
                 >
                   <span className={`status-dot ${task.status}`} />
                   <span>
-                    <strong>{task.id}</strong>
+                    <strong>
+                      {task.id}
+                      <em className={`engine-badge ${task.engine ?? "pending"}`}>
+                        {task.engine ?? "auto"}
+                      </em>
+                    </strong>
                     <small>{task.task}</small>
                   </span>
                 </button>
@@ -266,8 +307,11 @@ function TaskDetail({ task, artifacts }: { task: Task; artifacts: ArtifactState 
         <Meta label="Repo" value={task.repo_path} />
         <Meta label="Workspace" value={task.workspace_path ?? "Not created yet"} />
         <Meta label="Branch" value={task.branch_name ?? "Not created yet"} />
+        <Meta label="Kind" value={task.kind} />
+        <Meta label="Engine" value={task.engine ?? "Not chosen yet"} />
         <Meta label="Risk" value={task.risk} />
         <Meta label="Priority" value={task.priority} />
+        <Meta label="Cost" value={formatCost(task.cost_usd)} />
         <Meta label="Updated" value={formatDate(task.updated_at)} />
       </section>
 
@@ -332,6 +376,12 @@ async function optionalResult(loader: () => Promise<{ result: unknown }>): Promi
 
 function messageFromError(caught: unknown): string {
   return caught instanceof Error ? caught.message : String(caught);
+}
+
+// codex and antigravity report no cost at all, so a blank here means "not reported",
+// never "free".
+function formatCost(value: number | null): string {
+  return value === null ? "Not reported" : `$${value.toFixed(4)}`;
 }
 
 function formatDate(value: string): string {

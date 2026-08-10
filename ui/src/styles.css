@@ -448,3 +448,43 @@ pre {
     grid-template-columns: 36px 1fr;
   }
 }
+
+/* Which engine ran a task is the first thing you want from the list, so it sits
+   next to the id rather than only in the detail pane. */
+.engine-badge {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.engine-badge.codex {
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+.engine-badge.grok {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.engine-badge.antigravity {
+  background: #ffe4e6;
+  color: #9f1239;
+}
+
+.engine-badge.claude {
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.engine-badge.pending {
+  background: #f8fafc;
+  color: #94a3b8;
+}

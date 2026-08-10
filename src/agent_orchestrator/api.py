@@ -12,7 +12,9 @@ from pydantic import BaseModel, Field
 from agent_orchestrator.config import Config, load_config
 from agent_orchestrator.daemon import process_one
 from agent_orchestrator.db import TaskStore
-from agent_orchestrator.models import Priority, Risk, Task
+from agent_orchestrator.engines import probe_all
+from agent_orchestrator.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus
+from agent_orchestrator.router import load_routing_table
 
 
 LogKind = Literal["agent", "stdout", "stderr"]
@@ -23,6 +25,10 @@ class CreateTaskRequest(BaseModel):
     task: str = Field(min_length=1)
     risk: Risk = Risk.NORMAL
     priority: Priority = Priority.NORMAL
+    kind: TaskKind = TaskKind.IMPLEMENT
+    engine: Engine | None = None
+    parent_id: str | None = None
+    base_ref: str | None = None
 
 
 def serialize_task(config: Config, task: Task) -> dict[str, object]:
@@ -37,6 +43,11 @@ def serialize_task(config: Config, task: Task) -> dict[str, object]:
         "risk": task.risk.value,
         "priority": task.priority.value,
         "status": task.status.value,
+        "kind": task.kind.value,
+        "engine": task.engine.value if task.engine else None,
+        "parent_id": task.parent_id,
+        "cost_usd": task.cost_usd,
+        "exit_code": task.exit_code,
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat(),
         "result_summary": task.result_summary,
@@ -93,8 +104,30 @@ def create_app(config: Config | None = None) -> FastAPI:
             task=request.task,
             risk=request.risk,
             priority=request.priority,
+            kind=request.kind,
+            engine=request.engine,
+            parent_id=request.parent_id,
+            base_ref=request.base_ref,
         )
         return {"task": serialize_task(app_config, task)}
+
+    @app.get("/engines")
+    def list_engines() -> dict[str, object]:
+        table = load_routing_table(app_config.routing_path)
+        return {
+            "engines": [item.describe() for item in probe_all(refresh=True).values()],
+            "routing": table.describe(),
+        }
+
+    @app.post("/tasks/{task_id}/cancel")
+    def cancel_task(task_id: str) -> dict[str, object]:
+        task = store.get_task(task_id)
+        if task is None:
+            raise HTTPException(status_code=404, detail={"message": "task not found"})
+        # The worktree and any partial changes stay put so they can still be inspected.
+        store.set_status(task_id, TaskStatus.BLOCKED, "cancelled from the UI")
+        updated = store.get_task(task_id)
+        return {"task": serialize_task(app_config, updated)} if updated else {}
 
     @app.get("/tasks/{task_id}")
     def get_task(task_id: str) -> dict[str, object]:

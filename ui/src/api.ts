@@ -1,6 +1,14 @@
 /// <reference types="vite/client" />
 
 export type Risk = "read_only" | "normal" | "high";
+export type TaskKind =
+  | "implement"
+  | "refactor"
+  | "test"
+  | "review"
+  | "investigate"
+  | "ui_verify";
+export type Engine = "claude" | "codex" | "grok" | "antigravity";
 export type Priority = "low" | "normal" | "high";
 export type TaskStatus =
   | "queued"
@@ -20,6 +28,11 @@ export type Task = {
   risk: Risk;
   priority: Priority;
   status: TaskStatus;
+  kind: TaskKind;
+  engine: Engine | null;
+  parent_id: string | null;
+  cost_usd: number | null;
+  exit_code: number | null;
   created_at: string;
   updated_at: string;
   result_summary: string | null;
@@ -34,6 +47,24 @@ export type CreateTaskInput = {
   task: string;
   risk: Risk;
   priority: Priority;
+  kind: TaskKind;
+  engine?: Engine | null;
+};
+
+export type EngineCapability = {
+  engine: Engine;
+  path: string;
+  version: string;
+  structured_output: boolean;
+  reports_cost: boolean;
+  notes: string[];
+};
+
+export type RoutingEntry = {
+  kind: TaskKind;
+  engine: Engine;
+  fallbacks: Engine[];
+  writes: boolean;
 };
 
 export type Artifact = {
@@ -56,7 +87,9 @@ export class ApiError extends Error {
   }
 }
 
-const API_BASE = import.meta.env.VITE_AGENT_API_BASE ?? "http://127.0.0.1:8765";
+// `import.meta.env` only exists under Vite; outside it — `deno test` — reading a
+// property off it throws at module load, which took the whole test file down.
+const API_BASE = import.meta.env?.VITE_AGENT_API_BASE ?? "http://127.0.0.1:8765";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -104,6 +137,19 @@ export const api = {
 
   async processOne(): Promise<{ processed: boolean }> {
     return await request("/daemon/process-one", { method: "POST" });
+  },
+
+  async listEngines(): Promise<
+    { engines: EngineCapability[]; routing: RoutingEntry[] }
+  > {
+    return await request("/engines");
+  },
+
+  async cancelTask(taskId: string): Promise<Task> {
+    const payload = await request<{ task: Task }>(`/tasks/${taskId}/cancel`, {
+      method: "POST",
+    });
+    return payload.task;
   },
 
   async getLog(taskId: string, kind: "agent" | "stdout" | "stderr"): Promise<Artifact> {

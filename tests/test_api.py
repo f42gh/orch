@@ -90,3 +90,66 @@ def test_process_one_with_empty_queue(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"processed": False}
+
+
+def test_task_payload_carries_engine_kind_and_cost(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    created = client.post(
+        "/tasks",
+        json={
+            "repo": str(tmp_path),
+            "task": "レビューして",
+            "kind": "review",
+            "engine": "grok",
+            "risk": "read_only",
+        },
+    )
+
+    assert created.status_code == 201
+    payload = created.json()["task"]
+    assert payload["kind"] == "review"
+    assert payload["engine"] == "grok"
+    assert payload["cost_usd"] is None
+
+    store = TaskStore(Config(runtime_root=tmp_path))
+    store.update_task("task-0001", cost_usd=0.125, exit_code=0)
+
+    assert client.get("/tasks/task-0001").json()["task"]["cost_usd"] == 0.125
+
+
+def test_engines_endpoint_reports_the_routing_table(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    response = client.get("/engines")
+
+    assert response.status_code == 200
+    routing = {entry["kind"]: entry["engine"] for entry in response.json()["routing"]}
+    assert routing["implement"] == "codex"
+    assert routing["review"] == "grok"
+
+
+def test_cancel_marks_the_task_blocked(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    client.post("/tasks", json={"repo": str(tmp_path), "task": "work"})
+
+    response = client.post("/tasks/task-0001/cancel")
+
+    assert response.status_code == 200
+    assert response.json()["task"]["status"] == "blocked"
+
+
+def test_cancelling_an_unknown_task_is_404(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    assert client.post("/tasks/task-9999/cancel").status_code == 404
+
+
+def test_rejects_an_unknown_kind(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    response = client.post(
+        "/tasks", json={"repo": str(tmp_path), "task": "work", "kind": "telepathy"}
+    )
+
+    assert response.status_code == 422
