@@ -317,3 +317,17 @@ def _write_patch(config: Config, task_id: str) -> None:
         "+x = 1\n",
         encoding="utf-8",
     )
+
+
+def test_dispatch_reports_the_branch_immediately(env) -> None:
+    """The worktree is made by the worker, but the caller needs the branch now — the
+    playbook has it point reviewers at agent/<engine>/<id> before the task finishes."""
+    config, repo, _ = env
+    server = build_server(config)
+
+    result = tool(server, "orch_dispatch")(repo=str(repo), task="work", kind="review")
+
+    assert result["branch"] == "agent/grok/task-0001"
+    stored = TaskStore(config).get_task("task-0001")
+    assert stored is not None
+    assert stored.branch_name == "agent/grok/task-0001"

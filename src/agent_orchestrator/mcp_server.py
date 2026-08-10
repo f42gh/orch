@@ -43,6 +43,7 @@ from agent_orchestrator.models import (
 )
 from agent_orchestrator.router import RoutingError, load_routing_table, resolve_engine
 from agent_orchestrator.result import save_git_diff
+from agent_orchestrator.workspace import branch_name_for_task
 
 #: Upper bound on `orch_wait`, so a stuck task cannot wedge the caller.
 MAX_WAIT_S = 120.0
@@ -226,8 +227,19 @@ def build_server(config: Config) -> MCPServer:
             parent_id=parent_id,
             base_ref=base_ref,
         )
+        # The worktree is created by the worker, but its branch name is already
+        # determined — and the caller needs it now, to point a reviewer at the branch
+        # without waiting for the task to finish.
+        branch = branch_name_for_task(created.id, chosen)
+        store.update_task(created.id, branch_name=branch)
+
         pid = _spawn_worker(config, created.id)
-        return {**_serialize(config, created), "worker_pid": pid, "engine": chosen.value}
+        return {
+            **_serialize(config, created),
+            "branch": branch,
+            "engine": chosen.value,
+            "worker_pid": pid,
+        }
 
     @server.tool(
         description=(
