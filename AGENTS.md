@@ -30,6 +30,7 @@ uv sync                       # install
 uv run pytest                 # tests
 uv run agentctl engines       # what this machine has, and the routing table
 uv run agentctl add --repo <path> --task "..." --kind implement
+uv run agentctl dispatch --repo <path> --task "..." --json   # add + start; the JSON is CAGE's contract
 uv run agentd run-task <id>   # run one task
 uv run agentd run --max-concurrency 2
 uv run agentapi run           # local HTTP API on 127.0.0.1:8765

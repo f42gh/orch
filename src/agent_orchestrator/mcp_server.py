@@ -21,7 +21,6 @@ import json
 import os
 import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -30,8 +29,8 @@ from mcp.server import MCPServer
 
 from agent_orchestrator.config import Config, load_config
 from agent_orchestrator.db import TaskStore
+from agent_orchestrator.dispatch import DispatchError, dispatch_task, pid_path
 from agent_orchestrator.engines import probe_all
-from agent_orchestrator.logging_utils import task_log_dir
 from agent_orchestrator.models import (
     TERMINAL_STATUSES,
     Engine,
@@ -41,9 +40,8 @@ from agent_orchestrator.models import (
     TaskKind,
     TaskStatus,
 )
-from agent_orchestrator.router import RoutingError, load_routing_table, resolve_engine
+from agent_orchestrator.router import load_routing_table
 from agent_orchestrator.result import save_git_diff
-from agent_orchestrator.workspace import branch_name_for_task
 
 #: Upper bound on `orch_wait`, so a stuck task cannot wedge the caller.
 MAX_WAIT_S = 120.0
@@ -51,10 +49,6 @@ POLL_INTERVAL_S = 1.0
 #: How much of a patch to inline before telling the caller to read the file instead.
 DEFAULT_DIFF_BYTES = 60_000
 LOG_TAIL_LINES = 40
-
-
-class DispatchError(RuntimeError):
-    pass
 
 
 def _store(config: Config) -> TaskStore:
@@ -103,49 +97,6 @@ def _tail(path: Path, lines: int = LOG_TAIL_LINES) -> str:
         return ""
     content = path.read_text(encoding="utf-8", errors="replace").splitlines()
     return "\n".join(content[-lines:])
-
-
-def _pid_path(config: Config, task_id: str) -> Path:
-    return task_log_dir(config, task_id) / "worker.pid"
-
-
-def _spawn_worker(config: Config, task_id: str) -> int:
-    """Start a detached worker for `task_id` and return its pid.
-
-    The child is put in its own session so it outlives this server, and its output goes
-    to a file — inheriting stdout would corrupt the MCP stream.
-    """
-    log_dir = task_log_dir(config, task_id)
-    worker_log = log_dir / "worker.log"
-    handle = worker_log.open("a", encoding="utf-8")
-    try:
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "agent_orchestrator.daemon",
-                "run-task",
-                task_id,
-                "--runtime-root",
-                str(config.runtime_root),
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=handle,
-            stderr=handle,
-            start_new_session=True,
-            env={**os.environ, "PYTHONPATH": _package_root()},
-        )
-    finally:
-        handle.close()
-    _pid_path(config, task_id).write_text(str(process.pid), encoding="utf-8")
-    return process.pid
-
-
-def _package_root() -> str:
-    """`src/` on the path, so the detached worker imports the same code as this server."""
-    existing = os.environ.get("PYTHONPATH", "")
-    root = str(Path(__file__).resolve().parents[1])
-    return f"{root}{os.pathsep}{existing}" if existing else root
 
 
 def build_server(config: Config) -> MCPServer:
@@ -199,46 +150,23 @@ def build_server(config: Config) -> MCPServer:
         base_ref: str | None = None,
         parent_id: str | None = None,
     ) -> dict[str, Any]:
-        store = _store(config)
-        repo_path = Path(repo).expanduser()
-        if not repo_path.exists():
-            raise DispatchError(f"repo does not exist: {repo_path}")
-
-        parsed_kind = _parse(TaskKind, kind, TaskKind.IMPLEMENT)
-        parsed_risk = _parse(Risk, risk, Risk.NORMAL)
-        parsed_priority = _parse(Priority, priority, Priority.NORMAL)
-        requested = _parse(Engine, engine) if engine else None
-
-        # Resolve the engine now rather than in the worker, so the caller learns
-        # immediately when it asked for something this machine does not have.
-        table = load_routing_table(config.routing_path)
-        try:
-            chosen = resolve_engine(parsed_kind, probe_all().keys(), requested, table)
-        except RoutingError as exc:
-            raise DispatchError(str(exc)) from None
-
-        created = store.add_task(
-            repo_path=repo_path,
+        dispatched = dispatch_task(
+            config,
+            _store(config),
+            repo=repo,
             task=task,
-            risk=parsed_risk,
-            priority=parsed_priority,
-            kind=parsed_kind,
-            engine=chosen,
+            kind=_parse(TaskKind, kind, TaskKind.IMPLEMENT),
+            risk=_parse(Risk, risk, Risk.NORMAL),
+            priority=_parse(Priority, priority, Priority.NORMAL),
+            engine=_parse(Engine, engine) if engine else None,
             parent_id=parent_id,
             base_ref=base_ref,
         )
-        # The worktree is created by the worker, but its branch name is already
-        # determined — and the caller needs it now, to point a reviewer at the branch
-        # without waiting for the task to finish.
-        branch = branch_name_for_task(created.id, chosen)
-        store.update_task(created.id, branch_name=branch)
-
-        pid = _spawn_worker(config, created.id)
         return {
-            **_serialize(config, created),
-            "branch": branch,
-            "engine": chosen.value,
-            "worker_pid": pid,
+            **_serialize(config, dispatched.task),
+            "branch": dispatched.branch,
+            "engine": dispatched.engine.value,
+            "worker_pid": dispatched.worker_pid,
         }
 
     @server.tool(
@@ -425,7 +353,7 @@ def _require(config: Config, task_id: str) -> Task:
 
 
 def _kill_worker(config: Config, task_id: str) -> bool:
-    path = _pid_path(config, task_id)
+    path = pid_path(config, task_id)
     if not path.exists():
         return False
     try:

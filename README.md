@@ -1,7 +1,7 @@
-# agent-orchestrator
+# orch
 
-A local orchestrator that hands coding work to whichever agent CLI suits it, runs each
-task in its own git worktree, and gives the result back for a human to review.
+A local agent orchestrator that hands coding work to whichever agent CLI suits it, runs
+each task in its own git worktree, and gives the result back for a human to review.
 
 Claude Code is the orchestrator. `codex`, `grok`, `agy` (Antigravity) and `claude` are
 workers, reached over an MCP server. The task's *kind* picks the engine:
@@ -20,6 +20,8 @@ rather than taken from its documentation.
 ## Setup
 
 ```bash
+git clone https://github.com/f42gh/orch
+cd orch
 uv sync
 uv run agentctl engines   # what this machine has, and the routing table
 ```
@@ -42,6 +44,7 @@ implement while a different one reviews.
 ```bash
 uv run agentctl add --repo ~/dev/my-project --task "READMEのセットアップ手順を最新化して"
 uv run agentctl add --repo ~/dev/my-project --task "calc.py をレビューして" --kind review --risk read_only
+uv run agentctl dispatch --repo ~/dev/my-project --task "..." --json  # add + start in one shot; what CAGE calls
 
 uv run agentd run-task task-0001      # run one
 uv run agentd run --max-concurrency 2 # drain the queue
@@ -50,7 +53,7 @@ uv run agentctl list
 uv run agentctl show task-0001
 ```
 
-Options for `add`: `--kind`, `--engine`, `--risk`, `--priority`, `--parent`, `--base-ref`.
+Options for `add` and `dispatch`: `--kind`, `--engine`, `--risk`, `--priority`, `--parent`, `--base-ref`.
 
 ## Runtime layout
 

@@ -1,14 +1,39 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from agent_orchestrator.config import load_config
 from agent_orchestrator.daemon import run_daemon
 from agent_orchestrator.db import TaskStore
+from agent_orchestrator.dispatch import DispatchError, dispatch_task
 from agent_orchestrator.engines import probe_all
 from agent_orchestrator.models import Engine, Priority, Risk, TaskKind
 from agent_orchestrator.router import load_routing_table
+
+
+def _add_task_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--task", required=True)
+    parser.add_argument(
+        "--kind",
+        choices=[kind.value for kind in TaskKind],
+        default=TaskKind.IMPLEMENT.value,
+        help="what the task is for; selects the engine unless --engine is given",
+    )
+    parser.add_argument(
+        "--engine",
+        choices=[engine.value for engine in Engine],
+        default=None,
+        help="override the engine the router would pick",
+    )
+    parser.add_argument("--risk", choices=[risk.value for risk in Risk], default=Risk.NORMAL.value)
+    parser.add_argument(
+        "--priority", choices=[priority.value for priority in Priority], default=Priority.NORMAL.value
+    )
+    parser.add_argument("--parent", default=None, help="group this task under another task id")
+    parser.add_argument("--base-ref", default=None, help="branch, tag or commit to branch from")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,30 +41,24 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--runtime-root", default=None, help="override runtime root")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    add_parser = subparsers.add_parser("add", help="add a task")
-    add_parser.add_argument("--repo", required=True)
-    add_parser.add_argument("--task", required=True)
-    add_parser.add_argument(
-        "--kind",
-        choices=[kind.value for kind in TaskKind],
-        default=TaskKind.IMPLEMENT.value,
-        help="what the task is for; selects the engine unless --engine is given",
+    add_parser = subparsers.add_parser("add", help="add a task to the queue without starting it")
+    _add_task_arguments(add_parser)
+
+    dispatch_parser = subparsers.add_parser(
+        "dispatch", help="add a task and start its detached worker immediately"
     )
-    add_parser.add_argument(
-        "--engine",
-        choices=[engine.value for engine in Engine],
-        default=None,
-        help="override the engine the router would pick",
+    _add_task_arguments(dispatch_parser)
+    dispatch_parser.add_argument(
+        "--json", action="store_true", help="print the created task as one JSON line"
     )
-    add_parser.add_argument("--risk", choices=[risk.value for risk in Risk], default=Risk.NORMAL.value)
-    add_parser.add_argument(
-        "--priority", choices=[priority.value for priority in Priority], default=Priority.NORMAL.value
-    )
-    add_parser.add_argument("--parent", default=None, help="group this task under another task id")
-    add_parser.add_argument("--base-ref", default=None, help="branch, tag or commit to branch from")
 
     subparsers.add_parser("list", help="list tasks")
-    subparsers.add_parser("engines", help="show installed engines and the routing table")
+    engines_parser = subparsers.add_parser(
+        "engines", help="show installed engines and the routing table"
+    )
+    engines_parser.add_argument(
+        "--json", action="store_true", help="print engines and routing as one JSON line"
+    )
 
     show_parser = subparsers.add_parser("show", help="show task details")
     show_parser.add_argument("task_id")
@@ -74,6 +93,31 @@ def main() -> None:
         print(f"repo: {task.repo_path}")
         return
 
+    if args.command == "dispatch":
+        try:
+            dispatched = dispatch_task(
+                config,
+                store,
+                repo=args.repo,
+                task=args.task,
+                kind=TaskKind(args.kind),
+                risk=Risk(args.risk),
+                priority=Priority(args.priority),
+                engine=Engine(args.engine) if args.engine else None,
+                parent_id=args.parent,
+                base_ref=args.base_ref,
+            )
+        except DispatchError as exc:
+            raise SystemExit(str(exc)) from None
+        if args.json:
+            print(json.dumps(dispatched.describe(config), ensure_ascii=False))
+        else:
+            print(f"dispatched {dispatched.task.id}")
+            print(f"engine: {dispatched.engine.value}")
+            print(f"branch: {dispatched.branch}")
+            print(f"worker_pid: {dispatched.worker_pid}")
+        return
+
     if args.command == "list":
         print("task_id\tstatus\tkind\tengine\trisk\tpriority\tcost\tshort_task")
         for task in store.list_tasks():
@@ -88,6 +132,21 @@ def main() -> None:
 
     if args.command == "engines":
         table = load_routing_table(config.routing_path)
+        if args.json:
+            print(
+                json.dumps(
+                    {
+                        "engines": [
+                            capabilities.describe()
+                            for capabilities in probe_all(refresh=True).values()
+                        ],
+                        "routing": table.describe(),
+                        "kinds": [kind.value for kind in TaskKind],
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return
         print("engine\tversion\tstructured\tcost")
         for capabilities in probe_all(refresh=True).values():
             print(

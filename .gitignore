@@ -1,9 +1,26 @@
+# Python
 __pycache__/
 *.py[cod]
-.pytest_cache/
+*.egg-info/
 .venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Smoke-test runtime roots
 .runtime-smoke/
 .runtime-api-smoke/
+
+# UI (Deno-managed; deno.lock is the lockfile)
 node_modules/
 dist/
+ui/pnpm-lock.yaml
+
+# Local tool settings
+.claude/settings.local.json
+
+# Environment
+.env
+
+# OS
 .DS_Store
