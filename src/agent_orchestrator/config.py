@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
 RUNTIME_ROOT_ENV = "AGENT_ORCHESTRATOR_RUNTIME_ROOT"
+ROUTING_PATH_ENV = "AGENT_ORCHESTRATOR_ROUTING"
+DEFAULT_ROUTING_PATH = "~/.config/agent-orchestrator/routing.toml"
+
+
+def default_routing_path() -> Path:
+    raw = os.environ.get(ROUTING_PATH_ENV) or DEFAULT_ROUTING_PATH
+    return Path(raw).expanduser()
 
 
 @dataclass(frozen=True, slots=True)
 class Config:
     runtime_root: Path
+    #: Optional TOML file that overrides the built-in routing table.
+    routing_path: Path = field(default_factory=default_routing_path)
 
     @property
     def db_path(self) -> Path:
@@ -33,9 +42,10 @@ class Config:
         return self.runtime_root / "repos"
 
 
-def load_config(runtime_root: str | None = None) -> Config:
+def load_config(runtime_root: str | None = None, routing_path: str | None = None) -> Config:
     root = runtime_root or os.environ.get(RUNTIME_ROOT_ENV) or "~/agent-runtime"
-    return Config(runtime_root=Path(root).expanduser().resolve())
+    routing = Path(routing_path).expanduser() if routing_path else default_routing_path()
+    return Config(runtime_root=Path(root).expanduser().resolve(), routing_path=routing)
 
 
 def ensure_runtime_dirs(config: Config) -> None:
