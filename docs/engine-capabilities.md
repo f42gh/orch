@@ -160,16 +160,72 @@ The inclusion rules come from these recorded outputs:
 - Antigravity includes cache reads in input. Its 28,469 input + 204 output = 28,673,
   exactly the reported `total_tokens`, while its 27,101 cache reads are smaller than
   input. Subtract the cache reads.
-- Codex inclusion is an **assumption**, not a measurement: it reports no total to
-  cross-check. The observed 29,879 input with 25,088 cached input follows the OpenAI
-  Responses convention where input includes cached tokens. Reading them as separate
-  would imply 54,967 input tokens for a one-line prompt. This must be re-verified
-  against a future run whose reported total can be cross-checked.
+- Codex includes cache reads in input. This was an assumption when first written, because
+  the JSONL stream on stdout carries no total to check it against. It has since been
+  **confirmed** from codex's own session rollout, which does report one (see the section
+  below). A real 10-minute run recorded:
+
+  ```
+  total_tokens                        1,733,441
+  input_tokens + output_tokens        1,712,017 + 21,424 = 1,733,441   ← matches
+  if input excluded cached, total would be 1,712,017 + 1,616,128 + 21,424 = 3,349,569
+  uncached input                      1,712,017 − 1,616,128 = 95,889   ← what the adapter stores
+  ```
+
+  The same record also settles `reasoning_output_tokens`: the reported total is input plus
+  output alone, and 9,134 reasoning tokens sit inside the 21,424 output tokens. Adding
+  reasoning into `TokenUsage.total` would double-count, which is why it is excluded.
 
 Both subtractions are clamped at zero. A cached count larger than input invalidates the
 inclusion rule for that build, so the adapter preserves the result but raises a warning
 rather than silently emitting a negative or invented count. A run with no native usage
 object keeps `tokens=None`; an explicitly reported all-zero usage remains distinguishable.
+
+## What the engines write to disk but not to stdout
+
+stdout is not the whole story. codex records every `codex exec` run as a rollout under
+`$CODEX_HOME/sessions/<YYYY>/<MM>/<DD>/rollout-<timestamp>-<session_id>.jsonl`
+(`CODEX_HOME` defaults to `~/.codex`), and that file carries two things the stream does not.
+
+**The join key already exists.** The `<session_id>` in the filename is exactly the
+`thread_id` the adapter reads from `thread.started` and the store persists as
+`engine_session_id`; verified equal for a real run. `session_logs.py` globs on it rather
+than narrowing by date, because **the filename timestamp is local time while every
+timestamp inside the file, and every timestamp orch stores, is UTC** — observed as
+`rollout-2026-08-11T10-04-12-…` for a run whose first record reads
+`2026-08-11T01:04:14.546Z`. Converting would miss around midnight; globbing 277 rollouts
+costs 0.03s.
+
+```json
+{"type":"turn_context","payload":{"cwd":"…","model":"gpt-5.6-sol","effort":"xhigh", …}}
+{"type":"event_msg","payload":{"type":"token_count",
+  "info":{"total_token_usage":{…},"model_context_window":258400},
+  "rate_limits":{"primary":{"used_percent":4.0,"window_minutes":10080,
+                            "resets_at":1787014075},
+                 "secondary":null,"plan_type":"plus",
+                 "credits":{"has_credits":false,"unlimited":false,"balance":"0"}}}}
+```
+
+- **The model name appears nowhere on stdout.** grok and claude both name theirs in
+  `modelUsage`, so only codex needs the rollout for this. agy names its model nowhere
+  reachable: it survives only as a protobuf-shaped blob in the `gen_metadata` table of
+  `~/.gemini/antigravity-cli/conversations/<id>.db`, so agy tasks keep `model` NULL.
+- **`plan_type` says what is actually being spent.** Observed `"plus"` with
+  `credits.balance: "0"` — a subscription, where per-token dollars are not the unit of
+  consumption and a price table would describe money nobody paid. What is consumed is
+  `used_percent` of a `window_minutes` window.
+- **`used_percent` is quantised to whole numbers and is account-global.** Measured: two
+  tasks running concurrently both ended at 2.0, a third running alone moved 2.0 → 4.0, and
+  an earlier window read 63.0 before resetting to 4.0. A per-task delta is therefore
+  neither attributable under concurrency nor resolvable for short tasks, so orch stores the
+  end-of-task snapshot and never sums it. Per-task consumption is read from tokens instead.
+- One rollout holds exactly one `turn_context` and one model (checked across 12 files);
+  codex's internal `codex-auto-review` runs land in separate files with their own session
+  ids. `token_count` is emitted once per turn, so only the last one holds the final state.
+- `resets_at` is unix seconds: 1787014075 is 2026-08-18T00:47:55+00:00.
+
+Reading this file lives in `session_logs.py`, not in `CodexAdapter`, because adapters are
+pure and must not touch the filesystem beyond the files they declare.
 
 ## Consequences for the adapters
 

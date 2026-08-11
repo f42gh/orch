@@ -232,6 +232,27 @@ which disagree about whether their input count already includes cache reads.
 `input_tokens` here always means non-cached input. See `docs/engine-capabilities.md` for
 the per-engine mapping and the arithmetic it was derived from.
 
+### Models and quota
+
+`--group-by model` splits the same figures by the model that actually ran, which is what
+you want when the same kind of task went out at different reasoning efforts. grok and
+claude name their model on stdout; codex names it only in its own session rollout, which
+orch reads back through the session id it already stores. antigravity names it nowhere
+reachable, so those tasks show `-`.
+
+For an engine on a subscription rather than API billing, dollars are the wrong unit — codex
+reports its plan and how much of the current window it has consumed, so `stats` shows that
+directly instead of estimating a price:
+
+```
+quota: codex 4.0% of a 7d window (plan=plus, resets 2026-08-18T00:47Z)
+```
+
+This is a **snapshot of the account, not a per-task cost, and it is never summed.**
+`used_percent` is account-global and quantised to whole points, so two tasks running at
+once cannot be told apart in it and a short task does not move it at all. Per-task
+consumption is what the token counts are for.
+
 ## Runtime layout
 
 ```text
