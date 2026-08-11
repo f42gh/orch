@@ -1,143 +1,137 @@
 # orch
 
-English | [日本語](README.ja.md)
+[English](README.en.md) | 日本語
 
-A local agent orchestrator that hands coding work to whichever agent CLI suits it, runs
-each task in its own git worktree, and gives the result back for a human to review.
+コーディング作業を適材適所のエージェント CLI に振り分けるローカルオーケストレーター。
+各タスクは専用の git worktree で実行され、結果は人間がレビューするために返される。
 
-Claude Code is the orchestrator. `codex`, `grok`, `agy` (Antigravity) and `claude` are
-workers, reached over an MCP server. You can choose the engine assignment for every
-Run, Batch, or single task. When you leave a kind on automatic routing, these defaults
-apply:
+Claude Code がオーケストレーターとなり、`codex`・`grok`・`agy`(Antigravity)・`claude` が
+MCP サーバー経由で呼び出されるワーカーになる。Run・Batch・単一タスクのいずれでも、利用ごとに
+エンジンの割り当てを選べる。kind を自動ルーティングのままにした場合は、次のデフォルトを使う:
 
-| kind | automatic route | access |
+| kind | 自動ルート | アクセス |
 |---|---|---|
-| `implement` | codex → claude → grok | writes, inside the worktree |
-| `refactor` | codex → grok → claude | writes, inside the worktree |
-| `test` | codex → claude → grok | writes, inside the worktree |
-| `review` | grok → codex → claude | read-only |
-| `investigate` | grok → claude → codex | read-only |
-| `ui_verify` | antigravity → claude | writes, inside the worktree |
+| `implement` | codex → claude → grok | 書き込み可(worktree 内のみ) |
+| `refactor` | codex → grok → claude | 書き込み可(worktree 内のみ) |
+| `test` | codex → claude → grok | 書き込み可(worktree 内のみ) |
+| `review` | grok → codex → claude | 読み取り専用 |
+| `investigate` | grok → claude → codex | 読み取り専用 |
+| `ui_verify` | antigravity → claude | 書き込み可(worktree 内のみ) |
 
-In automatic mode, an exhausted chain falls back deterministically to another installed
-engine, so work can proceed as long as at least one worker CLI is available. The
-[engine capability notes](docs/engine-capabilities.md) record what each CLI actually
-does, measured rather than taken from its documentation.
+自動モードでは、保存された候補が尽きても別のインストール済みエンジンを決定的な順で選ぶため、
+少なくとも1つのワーカー CLI が利用できれば処理を続けられる。各 CLI が実際に何をするかは、
+ドキュメントではなく実測に基づく[エンジン能力表](docs/engine-capabilities.md)に記録している。
 
-These are defaults, not fixed assignments. Use the interactive `agentctl start`, pass an
-exact `--engine` for one task, or define a route table for a Run or Batch.
+この表は固定割り当てではなくデフォルトである。対話式の `agentctl start`、単一タスクへの厳密な
+`--engine` 指定、または Run/Batch のルート表で自由に上書きできる。
 
-For a new workflow you can replace those defaults with an explicit route table. Choose
-the table once, before anything starts:
+新しいワークフローでは、このデフォルトを明示的なルート表で上書きできる。実行を始める前に
+一度だけ割り当てを決める:
 
-| workflow | use it when | lifetime |
+| ワークフロー | 適している場合 | ライフサイクル |
 |---|---|---|
-| **Run** | work may be added later, or you choose later work after reviewing an earlier result | saved; accepts additions until you close it |
-| **Batch** | the complete set of independent tasks is known now | submitted once; no later additions |
+| **Run** | 後から作業を追加する、または先行結果を見て次の作業を決める | 保存され、close するまで追加可能 |
+| **Batch** | 独立した全タスクが最初から分かっている | 一度だけ投入し、後から追加しない |
 
-Routes choose engines only. The task kind and risk still determine the prompt, output
-schema and access level, so assigning a different engine does not bypass the safety
-policy.
+ルート表が決めるのはエンジンだけである。プロンプト、出力スキーマ、アクセス権は引き続き
+タスクの kind と risk で決まるため、別のエンジンを割り当てても安全ポリシーは迂回できない。
 
-A Run preserves routing and task history; it does not merge one task's uncommitted
-worktree into the next. If later work needs those code changes, review them first, then
-have a human adopt and commit them and pass that commit as `base_ref`.
+Run が保存するのはルートとタスク履歴であり、あるタスクの未コミットな worktree を次のタスクへ
+自動で重ねるものではない。後続作業がそのコードを必要とする場合は、先に人間がレビューして
+採用・コミットし、その commit を `base_ref` に指定する。
 
-## Setup
+## セットアップ
 
-Requirements: Python 3.12+, `uv`, Git, and at least one installed and authenticated
-worker CLI. Claude Code is required only for the MCP-driven workflow.
+必要なものは Python 3.12 以上、`uv`、Git、およびインストール・認証済みのワーカー CLI が
+少なくとも1つ。Claude Code は MCP 経由で利用する場合だけ必要になる。
 
 ```bash
 git clone https://github.com/f42gh/orch
 cd orch
 uv sync
-uv run agentctl engines   # what this machine has, and the routing table
+uv run agentctl engines   # このマシンにあるエンジンとルーティングテーブルを表示
 ```
 
-Each CLI needs to be installed and authenticated on its own. Nothing here stores
-credentials.
+各 CLI のインストールと認証はそれぞれ個別に必要。このツールが認証情報を保存することはない。
 
-### Use it from Claude Code
+### Claude Code から使う
 
-Register the MCP server and install the repository's `/orch` command template:
+MCP サーバーを登録し、リポジトリに含まれる `/orch` コマンドテンプレートをインストールする:
 
 ```bash
 claude mcp add orch -s user -- uv run --directory /absolute/path/to/orch agentmcp
-uv run agentctl install-claude-command
+uv run agentctl install-claude-command --locale ja
 ```
 
-Pass `--locale ja` to install the Japanese command template instead. It localizes the
-autocomplete description, argument hint, confirmation prompts, and final report.
+`--locale ja` は、入力候補の説明と引数ヒントだけでなく、確認や最終報告も日本語化する。英語版を
+使う場合は `--locale` を省略するか、`--locale en` を指定する。
 
-Start a new Claude Code session, then run `/orch <what you want done>`. Before dispatching
-anything, `/orch` shows the available engines, proposes a Run or Batch and its
-assignments, and waits for your confirmation. You can also call the MCP tools directly.
-Replace `/absolute/path/to/orch` with this checkout's absolute path. The installer only
-places the command file; it does not register the MCP server, and the command expects the
-server name `orch` used above.
+新しい Claude Code セッションを開始し、`/orch <やってほしいこと>` と入力する。`/orch` は何も
+実行する前に、利用可能なエンジン、Run/Batch の案、割り当てを提示し、確認を待つ。MCP ツールを
+直接呼び出すこともできる。`/absolute/path/to/orch` はこの checkout の絶対パスに置き換える。
+インストーラが配置するのはコマンドファイルだけで、MCP サーバーの登録は行わない。また、
+コマンドは上記の登録名 `orch` を前提とする。
 
-The direct workflow tools are `orch_run_create`, `orch_run_dispatch` and
-`orch_run_close` for Runs, `orch_batch_dispatch` for a Batch, and
-`orch_workflow_list`/`orch_workflow_show` for resuming or inspecting saved workflows.
-See the [Claude Code playbook](docs/CLAUDE-PLAYBOOK.md) for patterns such as fan-out and
-having one engine implement while a different one reviews.
+直接使うツールは、Run 用の `orch_run_create`・`orch_run_dispatch`・`orch_run_close`、Batch 用の
+`orch_batch_dispatch`、再開・確認用の `orch_workflow_list`・`orch_workflow_show`。
+個々のタスクは `orch_status`・`orch_wait`・`orch_result`・`orch_diff` で追跡し、成果物は
+`orch_adopt` で worktree から取り出す。`orch_stats` は下記の集計（コスト、トークン、実行時間、
+クォータ）をそのまま返す。ファンアウトや、あるエンジンに実装させて別のエンジンにレビューさせる
+パターンは [Claude Code playbook](docs/CLAUDE-PLAYBOOK.md)を参照。
 
-The default target is `~/.claude/commands/orch.md`. An identical file is left alone. A
-different existing command is never overwritten unless you pass `--force`; forced
-replacement first writes a uniquely named backup. Use `--target PATH` to install
-somewhere else. The supported template locales are `en` (default) and `ja`.
+デフォルトのインストール先は `~/.claude/commands/orch.md`。内容が同一なら何も変更しない。
+別内容の既存コマンドは `--force` なしでは上書きせず、強制置換時も一意な名前のバックアップを
+先に作成する。別の場所には `--target PATH` でインストールできる。テンプレートの対応ロケールは
+英語の `en`（デフォルト）と日本語の `ja`。
 
-## Use it from the terminal
+## ターミナルから使う
 
-For an interactive start where you choose the assignments for this use, run:
+今回の利用に合わせて対話形式で割り当てを選ぶには、次を実行する:
 
 ```bash
 uv run agentctl start
 ```
 
-The wizard detects installed engines, asks whether this is a persistent Run or a
-one-shot Batch, shows the automatic routes, and lets you override each task kind before
-anything starts. It requires a TTY. The Run path creates an empty Run and prints its
-`workflow_id`; add the first task with `run dispatch` as shown below. For scripts and
-repeatable commands, use the explicit forms below.
+ウィザードはインストール済みエンジンを検出し、永続 Run と一回限りの Batch のどちらにするかを
+尋ね、自動ルートを表示したうえで、開始前に kind ごとの割り当てを上書きできる。TTY 専用で、
+Run を選んだ場合は空の Run を作成して `workflow_id` を表示する。最初のタスクは下記の
+`run dispatch` で追加する。スクリプトや再現可能な操作には、以下の明示形式を使う。
 
-Create a persistent Run when you expect to add work later:
+後から作業を追加する場合は永続 Run を作る:
 
 ```bash
 uv run agentctl run create --repo ~/dev/my-project \
   --route implement=grok \
   --fallback implement=codex,claude
 
-# Copy workflow_id from the create output, for example run-0007.
-uv run agentctl run dispatch run-0007 --task "add the parser" --kind implement
+# create の出力にある workflow_id を使う。例: run-0007
+uv run agentctl run dispatch run-0007 --task "パーサーを追加して" --kind implement
 uv run agentctl run show run-0007
 uv run agentctl run list
 uv run agentctl run close run-0007
 ```
 
-Submit a one-shot Batch when every independent task is already known. The tasks file is
-a JSON array of task specifications; `--tasks-file -` reads it from stdin.
+独立した全タスクが分かっている場合は、一回限りの Batch で投入する。tasks file はタスク仕様の
+JSON 配列で、`--tasks-file -` を指定すると標準入力から読み込む。
 
 ```json
 [
   {
-    "task": "add the parser",
+    "task": "パーサーを追加して",
     "kind": "implement",
     "risk": "normal",
     "priority": "high",
     "base_ref": "main"
   },
   {
-    "task": "review the authentication flow",
+    "task": "認証フローをレビューして",
     "kind": "review"
   }
 ]
 ```
 
-Allowed task keys are `task`, `kind`, `risk`, `priority`, `parent_id` and `base_ref`.
-Choose engines at workflow level with `--route`; an `engine` key is not accepted in a
-Batch task object.
+タスクで使えるキーは `task`、`kind`、`risk`、`priority`、`parent_id`、`base_ref`。
+エンジンはワークフロー側の `--route` で選び、Batch のタスクオブジェクトに `engine` は書けない。
 
 ```bash
 uv run agentctl batch dispatch --repo ~/dev/my-project \
@@ -147,64 +141,61 @@ uv run agentctl batch dispatch --repo ~/dev/my-project \
 uv run agentctl batch list
 ```
 
-Repeat `--route KIND=ENGINE` for the kinds you want to assign. Unmentioned kinds inherit
-the current automatic primary when the workflow is created. Inputs accept `agy` as an
-alias; stored data and output always use the canonical name `antigravity`.
+割り当てる kind ごとに `--route KIND=ENGINE` を繰り返す。省略した kind は、ワークフロー作成時の
+自動 primary を継承する。入力では `agy` を別名として受け付けるが、保存値と出力では常に
+正規名 `antigravity` を使う。
 
-Fallback behavior is deliberately different depending on whether you provide a list:
+フォールバックは、リストを指定したかどうかで挙動が明確に変わる:
 
-- Omit `--fallback` for a kind to snapshot the current automatic route order. If that
-  whole chain is unavailable later, automatic mode still chooses another installed
-  engine deterministically. With a custom primary, the persisted explicit candidates
-  are that primary followed by the current configured primary and fallbacks with
-  duplicates removed; the persisted automatic mode then permits deterministic
-  any-installed rescue.
-- Provide a non-empty ordered list to make it strict and exhaustive. If neither the
-  primary nor an engine in that list is installed, dispatch fails instead of silently
-  choosing another engine. The list requires a matching `--route`, must not contain the
-  primary or duplicates, and cannot be empty.
+- kind の `--fallback` を省略すると、その時点の自動ルート順を保存する。後の実行時にその
+  候補がすべて利用不能なら、自動モードは別のインストール済みエンジンを決定的な順で選ぶ。
+  primary を上書きした場合、保存する明示候補はその primary、作成時の設定済み primary と
+  fallback（重複除去済み）の順になり、同時に保存する自動モードが最後の任意エンジン選択を許す。
+- 空でない順序付きリストを指定すると、その順序だけを厳密かつ網羅的に使う。primary と
+  リスト内のどのエンジンもインストールされていなければ、別のエンジンを暗黙に選ばず失敗する。
+  同じ kind の `--route` が必要で、primary 自体や重複を含めることはできず、空リストも無効。
 
-`run show` and `batch show` display the saved routes, fallback mode and actual engine
-selected for each task.
+`run show` と `batch show` では、保存されたルート、fallback mode、各タスクで実際に選ばれた
+エンジンを確認できる。
 
-### Legacy single-task commands
+### 従来の単一タスクコマンド
 
-The original single-task commands remain supported:
+元からある単一タスクコマンドも引き続き利用できる:
 
 ```bash
 uv run agentctl add --repo ~/dev/my-project --task "READMEのセットアップ手順を最新化して"
 uv run agentctl add --repo ~/dev/my-project --task "calc.py をレビューして" --kind review --risk read_only
-uv run agentctl dispatch --repo ~/dev/my-project --task "review the parser" --kind review --engine codex
-uv run agentctl dispatch --repo ~/dev/my-project --task "..." --json  # add + start in one shot; what CAGE calls
+uv run agentctl dispatch --repo ~/dev/my-project --task "パーサーをレビューして" --kind review --engine codex
+uv run agentctl dispatch --repo ~/dev/my-project --task "..." --json  # add と開始を一発で。CAGE が呼ぶのはこれ
 
-uv run agentd run-task task-0001      # run one
-uv run agentd run --max-concurrency 2 # drain the queue
+uv run agentd run-task task-0001      # 1 件実行
+uv run agentd run --max-concurrency 2 # キューを消化
 
 uv run agentctl list
 uv run agentctl show task-0001
 ```
 
-Options for `add` and `dispatch`: `--kind`, `--engine`, `--risk`, `--priority`, `--parent`, `--base-ref`.
-An explicit `--engine` wins over the kind's automatic route for that task; immediate
-dispatch fails early if that engine is not installed.
+`add` と `dispatch` のオプション: `--kind`、`--engine`、`--risk`、`--priority`、`--parent`、`--base-ref`。
+明示した `--engine` はそのタスクの kind による自動ルートより優先され、即時 dispatch では
+そのエンジンが未インストールならタスク作成前に失敗する。
 
-## What a run cost
+## 実行コストの集計
 
-Every finished task records what it spent: cost where the engine reports it, normalised
-token counts, the engine's wall time, and how much code moved. `agentctl stats` adds them
-up, and `orch_stats` returns the same figures to Claude.
+完了したタスクは必ず自分の実績値を記録する。エンジンが報告する場合はコスト、正規化された
+トークン数、エンジンの実行時間、動いたコード量。`agentctl stats` がそれを合計し、
+`orch_stats` が同じ数値を Claude に返す。
 
 ```bash
-uv run agentctl stats                          # everything this machine has ever run
-uv run agentctl stats --workflow run-0001      # one Run or Batch
-uv run agentctl stats --group-by engine        # per-engine breakdown
+uv run agentctl stats                          # このマシンの全実行
+uv run agentctl stats --workflow run-0001      # Run / Batch 単位
+uv run agentctl stats --group-by engine        # エンジン別の内訳
 uv run agentctl stats --since 2026-08-01 --repo ~/dev/my-project
-uv run agentctl stats --json                   # one JSON object
+uv run agentctl stats --json                   # 1 行の JSON
 ```
 
-Filters: `--repo`, `--workflow`, `--engine`, `--kind`, `--since`, `--until`. `--group-by`
-takes `engine`, `kind`, `status` or `repo`. `run show` and `batch show` carry the same
-totals for their own tasks.
+フィルタ: `--repo`、`--workflow`、`--engine`、`--kind`、`--since`、`--until`。
+`--group-by` は `engine` / `model` / `kind` / `status` / `repo` を取る。`run show` と
+`batch show` にも、そのワークフローのタスクだけを対象にした同じ合計が出る。
 
 ```
 tasks: 5
@@ -216,65 +207,63 @@ engine_s_total: 908.5
 engine_s_p50: 285.5
 ```
 
-Two things the numbers mean, both of which are easy to misread:
+読み違えやすい点が 2 つある:
 
-- **The cost total is partial by construction.** Only grok and claude report cost, so the
-  figure never appears without the fraction of tasks it covers and the engines missing
-  from it. `agentctl engines` shows which is which.
-- **`needs_review` is the successful outcome.** Nothing marks its own work as done, so a
-  clean run stops there and counts as completed; `succeeded` is only ever set by hand.
+- **コスト合計は原理的に部分値**。コストを報告するのは grok と claude だけなので、
+  数値は必ず「何件中何件が報告したか」と「どのエンジンが欠けているか」を伴って出る。
+  どのエンジンが報告するかは `agentctl engines` で確認できる。
+- **`needs_review` が成功の終状態**。自分の成果物を自分で完了扱いにするものはいないので、
+  正常に終わった実行はここで止まり、completed として数えられる。`succeeded` は手動で
+  付けたときにしか入らない。
 
-`engine_s_*` measures the engine process alone. It excludes worktree creation and queue
-waiting, which `orch_status` reports separately as `queue_wait_s`.
+`engine_s_*` はエンジンプロセスだけの時間で、worktree の作成やキュー待ちを含まない。
+キュー待ちは `orch_status` が `queue_wait_s` として別に返す。
 
-Token counts are normalised across the four engines, whose field names all differ and
-which disagree about whether their input count already includes cache reads.
-`input_tokens` here always means non-cached input. See `docs/engine-capabilities.md` for
-the per-engine mapping and the arithmetic it was derived from.
+トークン数は 4 エンジン間で正規化してある。フィールド名がそれぞれ違ううえ、input に
+キャッシュ読み込みを含むかどうかもエンジンによって割れているため、ここでの
+`input_tokens` は常に非キャッシュ分を指す。エンジンごとの対応表と、その根拠にした
+実測値は `docs/engine-capabilities.md` にある。
 
-### Models and quota
+### モデルとクォータ
 
-`--group-by model` splits the same figures by the model that actually ran, which is what
-you want when the same kind of task went out at different reasoning efforts. grok and
-claude name their model on stdout; codex names it only in its own session rollout, which
-orch reads back through the session id it already stores. antigravity names it nowhere
-reachable, so those tasks show `-`.
+`--group-by model` で、実際に走ったモデル別に同じ数値を割れる。同じ種類のタスクを
+違う reasoning effort で流したときに効く。grok と claude はモデル名を stdout に出すが、
+codex は自分のセッションログにしか書かない。orch は既に保存している session id を
+使ってそれを読み戻す。antigravity はどこにも出さないので `-` になる。
 
-For an engine on a subscription rather than API billing, dollars are the wrong unit — codex
-reports its plan and how much of the current window it has consumed, so `stats` shows that
-directly instead of estimating a price:
+API 課金ではなく定額プランで動いているエンジンでは、ドルは単位として間違っている。
+codex はプランと現在の窓の消費率を報告するので、価格を推定せずにそれをそのまま出す:
 
 ```
 quota: codex 4.0% of a 7d window (plan=plus, resets 2026-08-18T00:47Z)
 ```
 
-This is a **snapshot of the account, not a per-task cost, and it is never summed.**
-`used_percent` is account-global and quantised to whole points, so two tasks running at
-once cannot be told apart in it and a short task does not move it at all. Per-task
-consumption is what the token counts are for.
+これは**アカウントのスナップショットであってタスク単位のコストではなく、合計もしない**。
+`used_percent` はアカウント全体の値で整数に量子化されているため、同時に走った 2 本を
+区別できず、短いタスクではそもそも動かない。タスク単位の消費量はトークン数で見る。
 
-## Runtime layout
+## ランタイムの構成
 
 ```text
 ~/agent-runtime/
-  tasks.db                     shared by the MCP server, daemon, API and UI
-  workspaces/<task_id>/repo    the git worktree, on branch agent/<engine>/<task_id>
+  tasks.db                     MCP サーバー・デーモン・API・UI で共有
+  workspaces/<task_id>/repo    git worktree(ブランチは agent/<engine>/<task_id>)
   logs/<task_id>/
     agent.log stdout.log stderr.log
     diff.patch result.json
 ```
 
-Override with `--runtime-root` or `AGENT_ORCHESTRATOR_RUNTIME_ROOT`.
+`--runtime-root` または `AGENT_ORCHESTRATOR_RUNTIME_ROOT` で上書きできる。
 
-A finished task lands in `needs_review`, never `succeeded` — nothing marks its own work
-as done. `result.json` carries the summary, structured findings for reviews, changed
-files, diffstat, token usage, cost where the engine reports it, and warnings.
+完了したタスクは `succeeded` ではなく必ず `needs_review` になる — 自分の成果物を自分で
+完了扱いにするものはいない。`result.json` には、要約、レビューの場合は構造化された指摘、
+変更ファイル、diffstat、トークン使用量、エンジンが報告する場合はコスト、警告が入る。
 
-## Legacy HTTP API and UI
+## Legacy HTTP API と UI
 
-The HTTP API and React UI remain available for the original single-task workflow. They
-do not create or manage Runs and Batches; use the MCP tools or `agentctl` for new
-workflow orchestration.
+HTTP API と React UI は、従来の単一タスクワークフロー用として引き続き利用できる。
+Run と Batch の作成・管理には対応しないため、新しいワークフローのオーケストレーションには
+MCP ツールまたは `agentctl` を使う。
 
 ```bash
 uv sync --extra api
@@ -282,34 +271,34 @@ uv run agentapi run            # 127.0.0.1:8765
 cd ui && deno task dev
 ```
 
-Workflow member tasks can appear as ordinary flat tasks, but the API and UI do not
-manage workflow IDs, route snapshots, Run closing or Batch sealing. Point every process
-at the same runtime root. See the [UI README](ui/README.md) for frontend setup.
+ワークフロー内のタスクが通常の flat task として表示されることはあるが、workflow ID、route
+snapshot、Run の close、Batch の seal は管理しない。すべてのプロセスで同じ runtime root を
+指定する。フロントエンドの詳細は [UI README](ui/README.md) を参照。
 
-## Risk and access
+## リスクとアクセス制御
 
-`--risk` sets how much the task may do, independently of its kind:
+`--risk` は kind とは独立に、タスクに許す操作の範囲を決める:
 
-- `read_only` — reads and searches; writes nothing.
-- `normal` — writes, but only inside the worktree.
-- `high` — planning only. The prompt forbids implementation and asks for analysis.
+- `read_only` — 読み取りと検索のみ。何も書き込まない。
+- `normal` — 書き込み可。ただし worktree 内に限る。
+- `high` — 計画立案のみ。プロンプトで実装を禁止し、分析を求める。
 
-Containment is four layers, because the CLI engines expose no in-process hook to block a
-tool call the way the Claude SDK does:
+封じ込めは 4 層構成。CLI エンジンには Claude SDK のようにツール呼び出しをプロセス内で
+ブロックするフックがないためである:
 
-1. the OS sandbox each engine offers (kernel-enforced via Seatbelt on macOS),
-2. engine deny rules for `git push`, `sudo` and similar,
-3. the git worktree, so the original checkout is never touched,
-4. a post-run scan of the diff and logs that annotates the result rather than blocking.
+1. 各エンジンが提供する OS サンドボックス(macOS では Seatbelt によるカーネル強制)、
+2. `git push` や `sudo` などに対するエンジンの deny ルール、
+3. git worktree による分離。元のチェックアウトには決して触れない、
+4. 実行後の diff とログのスキャン。ブロックはせず、結果に注記を付ける。
 
-Unsandboxed access requires an explicit opt-in in `routing.toml`; nothing reaches for a
-`--dangerously-*` flag on its own.
+サンドボックスなしのアクセスは `routing.toml` での明示的なオプトインが必要。
+`--dangerously-*` 系のフラグに勝手に手を伸ばすことはない。
 
-## Tuning the routing
+## ルーティングのチューニング
 
-Optional `~/.config/agent-orchestrator/routing.toml`. Only the keys present are
-overridden. This table supplies automatic defaults. A Run or Batch snapshots its
-materialized routes when it is created, so later edits do not change that workflow:
+`~/.config/agent-orchestrator/routing.toml` は任意。書いたキーだけが上書きされる。この表は
+自動選択のデフォルトを提供する。Run と Batch は作成時に具体化したルートを保存するため、
+後からこのファイルを変更しても既存ワークフローは変わらない:
 
 ```toml
 [kinds.implement]
@@ -321,16 +310,20 @@ max_turns = 60
 timeout_s = 2400
 
 [engines.codex]
-allow_dangerous = true   # removes the sandbox for codex; think before setting this
+allow_dangerous = true   # codex のサンドボックスを外す。設定する前によく考えること
 ```
 
-## Limits
+## 制限事項
 
-- Generated changes always need a human to read them. `orch_adopt` returns a patch by
-  default and writes nothing.
-- Nothing commits, pushes or deploys.
-- `high` risk produces a plan, not an implementation.
-- Concurrent tasks are isolated while running, but two patches that edit the same
-  function still conflict at adoption time.
-- Only grok and claude report what a run cost; codex and antigravity do not, so the
-  totals are partial by construction.
+- 生成された変更は必ず人間が読む必要がある。`orch_adopt` はデフォルトでパッチを返すだけで、
+  何も書き込まない。
+- コミット・プッシュ・デプロイは一切しない。
+- `high` リスクは計画を出すだけで、実装はしない。
+- 並行タスクは実行中は分離されているが、同じ関数を編集した 2 つのパッチは
+  採用時に衝突する。
+- 実行コストを報告するのは grok と claude のみ。codex と antigravity は報告しないため、
+  ドル建ての合計は原理的に部分的な値になる。codex は代わりに定額プランとクォータを報告し、
+  `stats` はそれを価格に換算せず別枠のスナップショットとして出す。
+- クォータはアカウント全体の値で整数に量子化されているため、個別タスクへの帰属も合計もしない。
+  タスク単位の消費量はトークン数で見る。
+- antigravity はモデル名をどこにも報告しないため、それらのタスクは `-` にまとまる。
