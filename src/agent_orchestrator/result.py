@@ -94,18 +94,38 @@ def diff_stat(workspace_path: Path) -> str:
 
 
 def diff_numstat(workspace_path: Path) -> DiffStat:
-    result = _diff(workspace_path, "diff", "--numstat", "HEAD")
+    """Line counts and paths for everything the agent changed, in one git call.
+
+    `-z` is required, not a nicety. Plain `--numstat` renders a rename as the single
+    field `old.py => new.py`, so the path it yields names no file on disk; `--name-only`
+    used to report `new.py` for the same change. With `-z` a rename instead arrives as an
+    empty path field followed by the old and new paths as their own NUL-terminated
+    records, which is the only form that survives both renames and paths containing
+    whitespace.
+    """
+    result = _diff(workspace_path, "diff", "--numstat", "-z", "HEAD")
     if result.returncode != 0:
         return DiffStat(files_changed=0, insertions=0, deletions=0, files=())
 
     insertions = 0
     deletions = 0
     files: list[str] = []
-    for line in result.stdout.splitlines():
-        parts = line.split("\t", 2)
-        if len(parts) != 3 or not parts[2]:
+    # A trailing NUL leaves an empty final element; drop it rather than parsing it.
+    records = [record for record in result.stdout.split("\0")[:-1]]
+    index = 0
+    while index < len(records):
+        parts = records[index].split("\t")
+        index += 1
+        if len(parts) != 3:
             continue
         added, deleted, path = parts
+        if not path:
+            # Rename or copy: the next two records are the old and the new path. Report
+            # the new one, which is what a reviewer can actually open.
+            if index + 1 >= len(records):
+                break
+            path = records[index + 1]
+            index += 2
         # Git reports binary counts as "-"; the file still matters to reviewers, but
         # treating its non-numeric byte delta as lines would make totals unusable.
         insertions += int(added) if added.isdecimal() else 0

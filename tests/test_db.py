@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -233,3 +233,33 @@ def test_list_tasks_filters_by_workflow_id(tmp_path: Path) -> None:
 
     assert [task.id for task in listed] == [task.id for task in batch.tasks]
     assert unrelated.id not in {task.id for task in listed}
+
+
+def test_since_and_until_bounds_are_converted_to_utc_before_comparing(tmp_path: Path) -> None:
+    """SQLite compares these bounds lexically, so a non-UTC offset names another instant.
+
+    Measured before the fix: a +09:00 bound of 10:00 sorted after a row stored at
+    05:00+00:00 and excluded it, though that row is four hours later.
+    """
+    config = Config(runtime_root=tmp_path)
+    store = TaskStore(config)
+    task = store.add_task(repo_path=tmp_path, task="t")
+
+    tokyo = timezone(timedelta(hours=9))
+    before = (task.created_at - timedelta(hours=1)).astimezone(tokyo)
+    after = (task.created_at + timedelta(hours=1)).astimezone(tokyo)
+
+    assert [found.id for found in store.list_tasks(since=before)] == [task.id]
+    assert store.list_tasks(since=after) == []
+    assert [found.id for found in store.list_tasks(until=after)] == [task.id]
+    assert store.list_tasks(until=before) == []
+
+
+def test_a_naive_bound_is_read_as_utc(tmp_path: Path) -> None:
+    config = Config(runtime_root=tmp_path)
+    store = TaskStore(config)
+    task = store.add_task(repo_path=tmp_path, task="t")
+
+    naive_before = (task.created_at - timedelta(hours=1)).replace(tzinfo=None)
+
+    assert [found.id for found in store.list_tasks(since=naive_before)] == [task.id]

@@ -269,3 +269,38 @@ def test_exclusions_still_apply_on_a_second_capture(tmp_path: Path) -> None:
     text = diff.read_text(encoding="utf-8")
     assert "real.py" in text
     assert "__pycache__" not in text
+
+
+def test_numstat_reports_the_new_path_for_a_rename(tmp_path: Path) -> None:
+    """`git diff --numstat` without -z renders a rename as "old => new", naming no file.
+
+    changed_files() derives from numstat, and its consumers expect a path they can open.
+    """
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    init_repo(workspace)
+    (workspace / "old.py").write_text("a\nb\nc\nd\ne\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=workspace, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "add old"], cwd=workspace, check=True, stdout=subprocess.DEVNULL
+    )
+    subprocess.run(["git", "mv", "old.py", "new.py"], cwd=workspace, check=True)
+    (workspace / "new.py").write_text("a\nb\nc\nd\nf\n", encoding="utf-8")
+
+    stat = diff_numstat(workspace)
+
+    assert stat.files == ("new.py",)
+    assert "=>" not in stat.files[0]
+    assert changed_files(workspace) == ["new.py"]
+    assert (stat.insertions, stat.deletions) == (1, 1)
+
+
+def test_numstat_handles_a_path_containing_a_space(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    init_repo(workspace)
+    (workspace / "two words.txt").write_text("hello\n", encoding="utf-8")
+
+    stat = diff_numstat(workspace)
+
+    assert "two words.txt" in stat.files

@@ -5,7 +5,7 @@ import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
 
@@ -234,14 +234,14 @@ class TaskStore:
         if repo_path is not None:
             clauses.append("tasks.repo_path = ?")
             values.append(str(repo_path.expanduser().resolve()))
-        # utc_now_iso() and datetime.isoformat() produce sortable ISO 8601 strings,
-        # so SQLite can compare created_at and these bounds directly.
+        # created_at is stored as the sortable ISO 8601 string utc_now_iso() produces, so
+        # SQLite can compare the bounds directly — but only once they are in UTC too.
         if since is not None:
             clauses.append("created_at >= ?")
-            values.append(since.isoformat())
+            values.append(_iso_bound(since))
         if until is not None:
             clauses.append("created_at < ?")
-            values.append(until.isoformat())
+            values.append(_iso_bound(until))
         join = ""
         if workflow_id is not None:
             join = " JOIN workflow_tasks ON workflow_tasks.task_id = tasks.id"
@@ -721,6 +721,19 @@ def _claim(conn: sqlite3.Connection, task_id: str) -> str | None:
         (TaskStatus.RUNNING.value, now, now, task_id, TaskStatus.QUEUED.value),
     )
     return task_id if cursor.rowcount == 1 else None
+
+
+def _iso_bound(value: datetime) -> str:
+    """Render a query bound the way created_at is stored: ISO 8601 in UTC.
+
+    The comparison SQLite performs is lexical, so an offset other than +00:00 compares as
+    a different instant than it names. Measured: a bound of 2026-08-11T10:00:00+09:00
+    sorts after the row stored as 2026-08-11T05:00:00+00:00 and silently excluded it,
+    even though that row is four hours later. A naive bound is read as UTC, which is the
+    only clock this system writes.
+    """
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return aware.astimezone(UTC).isoformat()
 
 
 def normalize_value(value: object) -> object:
