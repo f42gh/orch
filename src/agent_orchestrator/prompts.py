@@ -12,80 +12,80 @@ from agent_orchestrator.router import AccessLevel
 
 KIND_INSTRUCTIONS: dict[TaskKind, str] = {
     TaskKind.IMPLEMENT: """
-## このタスクの進め方
-- 実装してください。
-- 既存のコードスタイル、命名、テストの書き方に合わせてください。
-- 可能ならテストを追加し、実行してください。
+## How to approach this task
+- Implement it.
+- Match the existing code style, naming, and the way tests are written here.
+- Add tests where you can, and run them.
 """,
     TaskKind.REFACTOR: """
-## このタスクの進め方
-- 振る舞いを変えずに構造だけを直してください。
-- リファクタ前後でテストが同じ結果になることを確認してください。
-- 機能追加はしないでください。
+## How to approach this task
+- Change the structure only. Behaviour must stay identical.
+- Confirm the tests produce the same result before and after.
+- Do not add features.
 """,
     TaskKind.TEST: """
-## このタスクの進め方
-- テストを追加・修正してください。
-- テストを実際に実行し、結果を報告してください。
-- テストを通すためにプロダクションコードの仕様を変えないでください。
+## How to approach this task
+- Add or fix tests.
+- Actually run them, and report the result.
+- Do not change what the production code is specified to do in order to make a test pass.
 """,
     TaskKind.REVIEW: """
-## このタスクの進め方
-- レビューだけを行い、ファイルは一切変更しないでください。
-- 推測ではなく、実際のコードを読んで指摘してください。
-- 各指摘について「ファイル:行」「何が問題か」「どう壊れるか」を示してください。
-- 問題が無いと判断した場合は、無理に指摘を作らないでください。
+## How to approach this task
+- Review only. Do not modify any file.
+- Base every finding on code you actually read, not on what you assume it does.
+- For each finding give the file and line, what is wrong, and how it breaks.
+- If you conclude there is nothing wrong, say so rather than inventing a finding.
 """,
     TaskKind.INVESTIGATE: """
-## このタスクの進め方
-- 調査だけを行い、ファイルは一切変更しないでください。
-- 実際に読んだファイルのパスを根拠として示してください。
-- 分かったこと、分からなかったこと、次に確認すべきことを分けて報告してください。
+## How to approach this task
+- Investigate only. Do not modify any file.
+- Cite the paths of the files you actually read as evidence.
+- Report what you established, what you could not, and what to check next, separately.
 """,
     TaskKind.UI_VERIFY: """
-## このタスクの進め方
-- 実際に画面を動かして確認してください。
-- 期待どおりに動いた点と、動かなかった点を分けて報告してください。
-- 再現手順を、他の人がそのまま追える粒度で書いてください。
+## How to approach this task
+- Drive the interface and see what it does.
+- Report what behaved as expected and what did not, separately.
+- Write the reproduction steps at a level of detail someone else can follow verbatim.
 """,
 }
 
 
 ACCESS_INSTRUCTIONS: dict[AccessLevel, str] = {
     AccessLevel.READ_ONLY: """
-## 権限
-このタスクは読み取り専用です。
-ファイルの作成・編集・削除はしないでください。
+## Permissions
+This task is read-only.
+Do not create, edit, or delete any file.
 """,
     AccessLevel.WORKSPACE_WRITE: """
-## 権限
-作業ディレクトリ内のファイルだけ変更できます。
-作業ディレクトリの外には一切書き込まないでください。
+## Permissions
+You may modify files inside the working directory only.
+Never write anything outside the working directory.
 """,
     AccessLevel.FULL: """
-## 権限
-サンドボックスは無効化されています。設定で明示的に許可された場合のみこの状態になります。
-それでも作業ディレクトリの外を変更しないでください。
+## Permissions
+The sandbox is disabled. This only happens when the configuration explicitly allows it.
+Even so, do not modify anything outside the working directory.
 """,
 }
 
 
 COMMON_RULES = """
-## 守ること
-- 作業ディレクトリの外のファイルを変更しない
-- 不明点があっても、まずコードベースを調査する
-- 破壊的操作をしない
-- secret, token, private key を読まない
-- git commit / git push をしない（差分は人間がレビューする）
-- deploy しない
+## Rules
+- Do not modify files outside the working directory
+- When something is unclear, investigate the codebase before asking
+- Do not perform destructive operations
+- Do not read secrets, tokens, or private keys
+- Do not run git commit or git push (a human reviews the diff)
+- Do not deploy
 """
 
 PROSE_OUTPUT_RULES = """
-## 最後に必ず出力すること
-- 変更した内容（変更していない場合はその旨）
-- 実行したコマンドとその結果
-- 人間が確認すべき点
-- 残っているリスクと未解決の問題
+## Report at the end
+- What you changed, or that you changed nothing
+- The commands you ran and their results
+- What a human should check
+- Remaining risks and unresolved problems
 """
 
 #: Used whenever the engine is also constrained by a JSON schema.
@@ -95,13 +95,13 @@ PROSE_OUTPUT_RULES = """
 #: every turn and never terminated, burning the whole turn budget before being
 #: cancelled. The two instructions must not both be present.
 STRUCTURED_OUTPUT_RULES = """
-## 出力形式
-回答は、指定された JSON スキーマに厳密に一致する **JSON オブジェクトを 1 個だけ** 返してください。
-- 散文の前置き・後書き・コードフェンスを付けない
-- JSON オブジェクトを複数出力しない
-- スキーマに無いキーを追加しない
-- 指摘が無い場合は findings を空配列にし、summary にその判断理由を書く
-調査は必要なだけ行って構いませんが、最終出力はこの JSON 1 個だけです。
+## Output format
+Answer with **exactly one JSON object** that strictly matches the given JSON schema.
+- No prose before or after it, and no code fences
+- Do not emit more than one JSON object
+- Do not add keys the schema does not define
+- If there is nothing to report, leave findings as an empty array and explain why in summary
+Investigate as much as you need to; the final output is this single JSON object and nothing else.
 """
 
 
@@ -120,26 +120,26 @@ def build_prompt(
     high_risk_note = ""
     if task.risk == Risk.HIGH:
         high_risk_note = """
-## 注意
-このタスクは high risk です。
-実装・編集・削除は禁止です。
-調査、影響範囲の整理、実装計画、リスク分析だけを行ってください。
+## Caution
+This task is high risk.
+Implementing, editing, and deleting are all forbidden.
+Do only investigation, blast-radius analysis, an implementation plan, and risk analysis.
 """
 
     output_rules = STRUCTURED_OUTPUT_RULES if structured else PROSE_OUTPUT_RULES
 
-    return f"""あなたはローカル開発環境で動く coding agent です。
+    return f"""You are a coding agent running in a local development environment.
 
-## タスク
+## Task
 {task.task}
 
-## 作業ディレクトリ
+## Working directory
 {task.workspace_path}
 
-## 種別
+## Kind
 {task.kind.value}
 
-## リスクレベル
+## Risk level
 {task.risk.value}
 {KIND_INSTRUCTIONS[task.kind]}{ACCESS_INSTRUCTIONS[access]}{high_risk_note}{COMMON_RULES}{output_rules}"""
 

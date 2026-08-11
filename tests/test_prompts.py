@@ -30,11 +30,11 @@ def test_prose_and_schema_instructions_are_never_both_present() -> None:
     structured = build_prompt(make_task(TaskKind.REVIEW), AccessLevel.READ_ONLY, structured=True)
     prose = build_prompt(make_task(TaskKind.IMPLEMENT), AccessLevel.WORKSPACE_WRITE)
 
-    assert "JSON オブジェクトを 1 個だけ" in structured
-    assert "最後に必ず出力すること" not in structured
+    assert "exactly one JSON object" in structured
+    assert "## Report at the end" not in structured
 
-    assert "最後に必ず出力すること" in prose
-    assert "JSON オブジェクトを 1 個だけ" not in prose
+    assert "## Report at the end" in prose
+    assert "exactly one JSON object" not in prose
 
 
 def test_only_review_is_schema_constrained() -> None:
@@ -48,24 +48,24 @@ def test_prompt_states_the_access_level_it_actually_runs_under() -> None:
     read_only = build_prompt(make_task(TaskKind.INVESTIGATE), AccessLevel.READ_ONLY)
     writing = build_prompt(make_task(TaskKind.IMPLEMENT), AccessLevel.WORKSPACE_WRITE)
 
-    assert "読み取り専用" in read_only
-    assert "作業ディレクトリ内のファイルだけ変更できます" in writing
+    assert "This task is read-only." in read_only
+    assert "inside the working directory only" in writing
 
 
 def test_high_risk_is_planning_only() -> None:
     prompt = build_prompt(make_task(TaskKind.IMPLEMENT, Risk.HIGH), AccessLevel.READ_ONLY)
 
-    assert "実装・編集・削除は禁止" in prompt
+    assert "Implementing, editing, and deleting are all forbidden." in prompt
 
 
 def test_every_kind_has_its_own_instructions() -> None:
     for kind in TaskKind:
         prompt = build_prompt(make_task(kind))
-        assert "## このタスクの進め方" in prompt
+        assert "## How to approach this task" in prompt
         assert kind.value in prompt
 
 
 def test_no_commit_or_push_is_always_stated() -> None:
     for kind in TaskKind:
         prompt = build_prompt(make_task(kind), structured=schema_for(kind) is not None)
-        assert "git commit / git push をしない" in prompt
+        assert "Do not run git commit or git push" in prompt
