@@ -177,6 +177,51 @@ uv run agentctl show task-0001
 明示した `--engine` はそのタスクの kind による自動ルートより優先され、即時 dispatch では
 そのエンジンが未インストールならタスク作成前に失敗する。
 
+## 実行コストの集計
+
+完了したタスクは必ず自分の実績値を記録する。エンジンが報告する場合はコスト、正規化された
+トークン数、エンジンの実行時間、動いたコード量。`agentctl stats` がそれを合計し、
+`orch_stats` が同じ数値を Claude に返す。
+
+```bash
+uv run agentctl stats                          # このマシンの全実行
+uv run agentctl stats --workflow run-0001      # Run / Batch 単位
+uv run agentctl stats --group-by engine        # エンジン別の内訳
+uv run agentctl stats --since 2026-08-01 --repo ~/dev/my-project
+uv run agentctl stats --json                   # 1 行の JSON
+```
+
+フィルタ: `--repo`、`--workflow`、`--engine`、`--kind`、`--since`、`--until`。
+`--group-by` は `engine` / `kind` / `status` / `repo` を取る。`run show` と `batch show`
+にも、そのワークフローのタスクだけを対象にした同じ合計が出る。
+
+```
+tasks: 5
+by_status: needs_review=4, failed=1
+success_rate: 80.0%
+cost_usd: 0.3971 (1/5 terminal tasks reported; no cost from codex)
+tokens: 2304070 (2/5 tasks reported; input=167635, output=39667, cache_read=2096768, ...)
+engine_s_total: 908.5
+engine_s_p50: 285.5
+```
+
+読み違えやすい点が 2 つある:
+
+- **コスト合計は原理的に部分値**。コストを報告するのは grok と claude だけなので、
+  数値は必ず「何件中何件が報告したか」と「どのエンジンが欠けているか」を伴って出る。
+  どのエンジンが報告するかは `agentctl engines` で確認できる。
+- **`needs_review` が成功の終状態**。自分の成果物を自分で完了扱いにするものはいないので、
+  正常に終わった実行はここで止まり、completed として数えられる。`succeeded` は手動で
+  付けたときにしか入らない。
+
+`engine_s_*` はエンジンプロセスだけの時間で、worktree の作成やキュー待ちを含まない。
+キュー待ちは `orch_status` が `queue_wait_s` として別に返す。
+
+トークン数は 4 エンジン間で正規化してある。フィールド名がそれぞれ違ううえ、input に
+キャッシュ読み込みを含むかどうかもエンジンによって割れているため、ここでの
+`input_tokens` は常に非キャッシュ分を指す。エンジンごとの対応表と、その根拠にした
+実測値は `docs/engine-capabilities.md` にある。
+
 ## ランタイムの構成
 
 ```text

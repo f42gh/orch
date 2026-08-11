@@ -188,6 +188,50 @@ Options for `add` and `dispatch`: `--kind`, `--engine`, `--risk`, `--priority`, 
 An explicit `--engine` wins over the kind's automatic route for that task; immediate
 dispatch fails early if that engine is not installed.
 
+## What a run cost
+
+Every finished task records what it spent: cost where the engine reports it, normalised
+token counts, the engine's wall time, and how much code moved. `agentctl stats` adds them
+up, and `orch_stats` returns the same figures to Claude.
+
+```bash
+uv run agentctl stats                          # everything this machine has ever run
+uv run agentctl stats --workflow run-0001      # one Run or Batch
+uv run agentctl stats --group-by engine        # per-engine breakdown
+uv run agentctl stats --since 2026-08-01 --repo ~/dev/my-project
+uv run agentctl stats --json                   # one JSON object
+```
+
+Filters: `--repo`, `--workflow`, `--engine`, `--kind`, `--since`, `--until`. `--group-by`
+takes `engine`, `kind`, `status` or `repo`. `run show` and `batch show` carry the same
+totals for their own tasks.
+
+```
+tasks: 5
+by_status: needs_review=4, failed=1
+success_rate: 80.0%
+cost_usd: 0.3971 (1/5 terminal tasks reported; no cost from codex)
+tokens: 2304070 (2/5 tasks reported; input=167635, output=39667, cache_read=2096768, ...)
+engine_s_total: 908.5
+engine_s_p50: 285.5
+```
+
+Two things the numbers mean, both of which are easy to misread:
+
+- **The cost total is partial by construction.** Only grok and claude report cost, so the
+  figure never appears without the fraction of tasks it covers and the engines missing
+  from it. `agentctl engines` shows which is which.
+- **`needs_review` is the successful outcome.** Nothing marks its own work as done, so a
+  clean run stops there and counts as completed; `succeeded` is only ever set by hand.
+
+`engine_s_*` measures the engine process alone. It excludes worktree creation and queue
+waiting, which `orch_status` reports separately as `queue_wait_s`.
+
+Token counts are normalised across the four engines, whose field names all differ and
+which disagree about whether their input count already includes cache reads.
+`input_tokens` here always means non-cached input. See `docs/engine-capabilities.md` for
+the per-engine mapping and the arithmetic it was derived from.
+
 ## Runtime layout
 
 ```text

@@ -25,6 +25,8 @@ server in `mcp_server.py`.
   stdout; that is the transport.
 - `src/agent_orchestrator/db.py` — SQLite, the single source of truth shared by the MCP
   server, the daemon, the CLI and the React UI.
+- `src/agent_orchestrator/stats.py` — pure aggregation over tasks: cost, tokens, engine
+  time, diff size. No database, no git, no filesystem; filtering belongs in `list_tasks`.
 - `docs/engine-capabilities.md` — what each CLI *actually* does, measured. Read it before
   touching an adapter.
 - `ui/` — Deno + React front end for the local API.
@@ -40,6 +42,7 @@ uv run agentctl run create --repo <path> --route implement=codex
 uv run agentctl run dispatch run-0001 --task "..." --kind implement
 uv run agentctl batch dispatch --repo <path> --route implement=codex --tasks-file tasks.json
 uv run agentctl add --repo <path> --task "..." --kind implement
+uv run agentctl stats --group-by engine        # cost, tokens, engine time, diff size
 uv run agentctl dispatch --repo <path> --task "..." --json   # add + start; the JSON is CAGE's contract
 uv run agentd run-task <id>   # run one task
 uv run agentd run --max-concurrency 2
