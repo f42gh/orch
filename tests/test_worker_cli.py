@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,9 @@ from agent_orchestrator.db import TaskStore
 from agent_orchestrator.engines.base import Capabilities, EngineResult, RunSpec
 from agent_orchestrator.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus, TokenUsage
 from agent_orchestrator.worker_cli import _spawn, run_task
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def init_repo(path: Path) -> None:
@@ -130,6 +134,7 @@ class StubAdapter:
                 text=self.result.text,
                 exit_code=exit_code,
                 session_id=self.result.session_id,
+                model=self.result.model,
                 usage=self.result.usage,
                 cost_usd=self.result.cost_usd,
                 warnings=self.result.warnings,
@@ -212,6 +217,63 @@ def test_reported_tokens_are_persisted(
     stored = store.get_task(task.id)
     assert stored is not None
     assert stored.tokens == tokens
+
+
+def test_codex_rollout_model_and_quota_are_persisted(
+    prepared: tuple[Config, TaskStore, Task],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, store, task = prepared
+    session_id = "fixture-session-id"
+    codex_home = tmp_path / "codex-home"
+    rollout_dir = codex_home / "sessions" / "2026" / "08" / "11"
+    rollout_dir.mkdir(parents=True)
+    rollout = rollout_dir / f"rollout-2026-08-11T10-04-14-{session_id}.jsonl"
+    rollout.write_text(
+        (FIXTURES / "codex_rollout.jsonl").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    adapter = StubAdapter(
+        "printf 'done\n'",
+        EngineResult(text="done", exit_code=0, session_id=session_id),
+    )
+    monkeypatch.setattr("agent_orchestrator.worker_cli.get_adapter", lambda engine: adapter)
+
+    assert run_task(config, store, task) == TaskStatus.NEEDS_REVIEW
+
+    stored = store.get_task(task.id)
+    assert stored is not None
+    assert stored.model == "gpt-5.6-sol"
+    assert stored.plan_type == "plus"
+    assert stored.quota_used_pct == 4.0
+    assert stored.quota_window_minutes == 10080
+    assert stored.quota_resets_at == datetime(2026, 8, 18, 0, 47, 55, tzinfo=UTC)
+
+
+def test_codex_run_without_a_matching_rollout_finishes_cleanly(
+    prepared: tuple[Config, TaskStore, Task],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config, store, task = prepared
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "empty-codex-home"))
+    adapter = StubAdapter(
+        "printf 'done\n'",
+        EngineResult(text="done", exit_code=0, session_id="missing-session"),
+    )
+    monkeypatch.setattr("agent_orchestrator.worker_cli.get_adapter", lambda engine: adapter)
+
+    assert run_task(config, store, task) == TaskStatus.NEEDS_REVIEW
+
+    stored = store.get_task(task.id)
+    assert stored is not None
+    assert stored.model is None
+    assert stored.plan_type is None
+    assert stored.quota_used_pct is None
+    assert stored.quota_window_minutes is None
+    assert stored.quota_resets_at is None
 
 
 def test_nonzero_exit_fails_the_task(

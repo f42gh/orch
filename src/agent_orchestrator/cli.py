@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -126,7 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
     stats_parser.add_argument("--until", metavar="ISO", default=None)
     stats_parser.add_argument(
         "--group-by",
-        choices=["engine", "kind", "status", "repo"],
+        choices=["engine", "kind", "model", "status", "repo"],
         default=None,
     )
     engines_parser = subparsers.add_parser(
@@ -451,6 +451,23 @@ def _format_ms_seconds(value: int | None) -> str:
     return f"{value / 1000:.1f}" if value is not None else "-"
 
 
+def _format_window_minutes(value: int | None) -> str:
+    if value is None:
+        return "unknown"
+    if value and value % (24 * 60) == 0:
+        return f"{value // (24 * 60)}d"
+    if value and value % 60 == 0:
+        return f"{value // 60}h"
+    return f"{value}m"
+
+
+def _format_quota_reset(value: datetime | None) -> str:
+    if value is None:
+        return "-"
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return aware.astimezone(UTC).strftime("%Y-%m-%dT%H:%MZ")
+
+
 def _print_stats(stats: Stats) -> None:
     totals = stats.totals
     statuses = ", ".join(
@@ -485,6 +502,14 @@ def _print_stats(stats: Stats) -> None:
     print(f"files_changed: {totals.files_changed}")
     print(f"insertions: {totals.insertions}")
     print(f"deletions: {totals.deletions}")
+
+    for snapshot in stats.quota_snapshots.values():
+        plan = snapshot.plan_type or "-"
+        print(
+            f"quota: {snapshot.engine.value} {snapshot.used_pct:.1f}% of a "
+            f"{_format_window_minutes(snapshot.window_minutes)} window "
+            f"(plan={plan}, resets {_format_quota_reset(snapshot.resets_at)})"
+        )
 
     if stats.group_by is None:
         return

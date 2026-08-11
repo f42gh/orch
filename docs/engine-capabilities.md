@@ -44,6 +44,9 @@ JSONL event shape actually observed:
 Notes:
 
 - The session id is `thread_id` at the top level of `thread.started`, not nested under `item`.
+- The same id appears in `~/.codex/sessions/*/*/*/rollout-*-<thread_id>.jsonl`.
+  Across 12 measured rollouts, the first `turn_context` held the run's single model;
+  the last of many `token_count` events held the final account-wide plan and quota.
 - `turn.completed.usage` uses `cached_input_tokens` / `cache_write_input_tokens`
   (different names from grok's `cache_read_input_tokens` / `cache_creation_input_tokens`).
 - **codex reports no cost.** `total_cost_usd` does not exist in this stream.
@@ -72,6 +75,8 @@ Notes:
 - `cost_is_partial` / `usage_is_incomplete` did not appear in this run but are documented;
   when either is true all cost floats are omitted, so the adapter must not sum `modelUsage`
   rows into a fake total.
+- `modelUsage` is keyed by model name. One fixture key identifies the run; multiple
+  keys are retained in sorted order because a run can span models.
 - Exit codes: 0 success, 1 error, 130 SIGINT, 143 SIGTERM.
 - Fixture: `tests/fixtures/grok_result.json`
 
@@ -136,6 +141,7 @@ Notes:
 - The answer is `result` (not `text`), and `is_error` is the authoritative failure signal.
 - `permission_denials` is worth surfacing: it tells the orchestrator that the agent was
   blocked rather than unable.
+- Like Grok, `modelUsage` is keyed by model name rather than carrying one model field.
 - Fixture: `tests/fixtures/claude_result.json`
 
 ## Token usage normalisation

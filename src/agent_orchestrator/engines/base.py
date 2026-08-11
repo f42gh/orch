@@ -54,6 +54,7 @@ class EngineResult:
     #: Populated when the engine was asked for schema-constrained output.
     structured: dict[str, Any] | None = None
     tokens: TokenUsage | None = None
+    model: str | None = None
 
     @property
     def ok(self) -> bool:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -298,6 +299,42 @@ def test_cli_stats_human_output_marks_partial_cost_and_uses_seconds(
     assert "cost_usd: 0.0000 (0/1 terminal tasks reported; no cost from codex)" in output
     assert "engine_s_total: 1.5" in output
     assert "engine_ms" not in output
+
+
+def test_cli_stats_human_output_renders_quota_windows(
+    workflow_env,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, store, repo, _ = workflow_env
+    codex = store.add_task(repo, "codex", engine=Engine.CODEX)
+    grok = store.add_task(repo, "grok", engine=Engine.GROK)
+    reset = datetime(2026, 8, 18, 0, 47, 55, tzinfo=UTC)
+    store.update_task(
+        codex.id,
+        status=TaskStatus.NEEDS_REVIEW,
+        plan_type="plus",
+        quota_used_pct=4.0,
+        quota_window_minutes=10080,
+        quota_resets_at=reset,
+    )
+    store.update_task(
+        grok.id,
+        status=TaskStatus.NEEDS_REVIEW,
+        plan_type="team",
+        quota_used_pct=8.0,
+        quota_window_minutes=300,
+    )
+    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+
+    main(["stats"])
+    output = capsys.readouterr().out
+
+    assert (
+        "quota: codex 4.0% of a 7d window "
+        "(plan=plus, resets 2026-08-18T00:47Z)" in output
+    )
+    assert "quota: grok 8.0% of a 5h window (plan=team, resets -)" in output
 
 
 def test_mcp_run_lifecycle_uses_ordered_snapshot_and_parent(workflow_env) -> None:

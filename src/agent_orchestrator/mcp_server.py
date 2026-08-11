@@ -268,6 +268,7 @@ def _serialize(config: Config, task: Task) -> dict[str, Any]:
         "status": task.status.value,
         "kind": task.kind.value,
         "engine": task.engine.value if task.engine else None,
+        "model": task.model,
         "risk": task.risk.value,
         "priority": task.priority.value,
         "task": task.task,
@@ -283,6 +284,12 @@ def _serialize(config: Config, task: Task) -> dict[str, Any]:
         "started_at": task.started_at.isoformat() if task.started_at else None,
         "finished_at": task.finished_at.isoformat() if task.finished_at else None,
         "engine_ms": task.engine_ms,
+        "plan_type": task.plan_type,
+        "quota_used_pct": task.quota_used_pct,
+        "quota_window_minutes": task.quota_window_minutes,
+        "quota_resets_at": (
+            task.quota_resets_at.isoformat() if task.quota_resets_at else None
+        ),
         "files_changed": task.files_changed,
         "insertions": task.insertions,
         "deletions": task.deletions,

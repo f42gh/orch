@@ -4,13 +4,14 @@ import math
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, TypeVar
 
-from agent_orchestrator.models import TERMINAL_STATUSES, Task, TaskStatus, TokenUsage
+from agent_orchestrator.models import Engine, TERMINAL_STATUSES, Task, TaskStatus, TokenUsage
 
 
 _Number = TypeVar("_Number", int, float)
-_GROUP_BY_VALUES = frozenset({"engine", "kind", "status", "repo"})
+_GROUP_BY_VALUES = frozenset({"engine", "kind", "model", "status", "repo"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,16 +72,39 @@ class Totals:
 
 
 @dataclass(frozen=True, slots=True)
+class QuotaSnapshot:
+    engine: Engine
+    plan_type: str | None
+    used_pct: float
+    window_minutes: int | None
+    resets_at: datetime | None
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "engine": self.engine.value,
+            "plan_type": self.plan_type,
+            "used_pct": self.used_pct,
+            "window_minutes": self.window_minutes,
+            "resets_at": self.resets_at.isoformat() if self.resets_at is not None else None,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class Stats:
     totals: Totals
     group_by: str | None
     groups: Mapping[str, Totals]
+    quota_snapshots: Mapping[str, QuotaSnapshot]
 
     def describe(self) -> dict[str, Any]:
         return {
             "totals": self.totals.describe(),
             "group_by": self.group_by,
             "groups": {key: totals.describe() for key, totals in self.groups.items()},
+            "quota_snapshots": {
+                key: snapshot.describe()
+                for key, snapshot in self.quota_snapshots.items()
+            },
         }
 
 
@@ -123,6 +147,8 @@ def summarize(tasks: Iterable[Task]) -> Totals:
         if task.started_at is not None
     ]
 
+    # Quota is an account-wide snapshot shared by overlapping tasks, so summing it
+    # into Totals would multiply one window by the number of recorded runs.
     return Totals(
         tasks=len(items),
         by_status=dict(by_status),
@@ -154,13 +180,21 @@ def build_stats(tasks: Iterable[Task], group_by: str | None = None) -> Stats:
         raise ValueError(f"group_by {group_by!r} is not one of: {allowed}")
 
     items = tuple(tasks)
+    quota_snapshots = _quota_snapshots(items)
     if group_by is None:
-        return Stats(totals=summarize(items), group_by=None, groups={})
+        return Stats(
+            totals=summarize(items),
+            group_by=None,
+            groups={},
+            quota_snapshots=quota_snapshots,
+        )
 
     grouped: dict[str, list[Task]] = {}
     for task in items:
         if group_by == "engine":
             key = task.engine.value if task.engine is not None else "-"
+        elif group_by == "model":
+            key = task.model if task.model is not None else "-"
         elif group_by == "kind":
             key = task.kind.value
         elif group_by == "status":
@@ -173,4 +207,38 @@ def build_stats(tasks: Iterable[Task], group_by: str | None = None) -> Stats:
         key: summarize(group)
         for key, group in sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0]))
     }
-    return Stats(totals=summarize(items), group_by=group_by, groups=ordered_groups)
+    return Stats(
+        totals=summarize(items),
+        group_by=group_by,
+        groups=ordered_groups,
+        quota_snapshots=quota_snapshots,
+    )
+
+
+def _quota_snapshots(tasks: Iterable[Task]) -> Mapping[str, QuotaSnapshot]:
+    latest: dict[Engine, Task] = {}
+    for task in tasks:
+        if task.engine is None or task.quota_used_pct is None:
+            continue
+        current = latest.get(task.engine)
+        if current is None or _finished_at(task) > _finished_at(current):
+            latest[task.engine] = task
+
+    return {
+        engine.value: QuotaSnapshot(
+            engine=engine,
+            plan_type=task.plan_type,
+            used_pct=task.quota_used_pct,
+            window_minutes=task.quota_window_minutes,
+            resets_at=task.quota_resets_at,
+        )
+        for engine, task in sorted(latest.items(), key=lambda item: item[0].value)
+    }
+
+
+def _finished_at(task: Task) -> datetime:
+    value = task.finished_at
+    if value is None:
+        return datetime.min.replace(tzinfo=UTC)
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return aware.astimezone(UTC)

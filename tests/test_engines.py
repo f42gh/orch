@@ -150,6 +150,7 @@ def test_grok_parses_recorded_json() -> None:
 
     assert "calc.py" in result.text
     assert result.session_id
+    assert result.model == "grok-4.5-build"
     assert result.cost_usd is not None and result.cost_usd > 0
     assert result.usage is not None
     assert result.tokens == TokenUsage(
@@ -342,6 +343,7 @@ def test_claude_parses_recorded_json() -> None:
 
     assert result.text == "calc.py, README.md"
     assert result.session_id == "9a97504e-3898-47fa-b5c2-413b906a3d78"
+    assert result.model == "claude-sonnet-5"
     assert result.cost_usd == pytest.approx(0.0955896)
     assert result.tokens == TokenUsage(
         input_tokens=4,
@@ -359,6 +361,34 @@ def test_claude_surfaces_permission_denials() -> None:
     result = ClaudeAdapter().parse(stdout, "", 0, RunSpec(argv=[]))
 
     assert any("denied by permissions" in warning for warning in result.warnings)
+
+
+@pytest.mark.parametrize(
+    ("adapter", "payload"),
+    (
+        (GrokAdapter(), {"text": "ok"}),
+        (ClaudeAdapter(), {"result": "ok"}),
+    ),
+)
+def test_model_usage_absence_keeps_model_unknown(adapter, payload: dict[str, object]) -> None:
+    result = adapter.parse(json.dumps(payload), "", 0, RunSpec(argv=[]))
+
+    assert result.model is None
+
+
+@pytest.mark.parametrize(
+    ("adapter", "payload"),
+    (
+        (GrokAdapter(), {"text": "ok"}),
+        (ClaudeAdapter(), {"result": "ok"}),
+    ),
+)
+def test_model_usage_joins_multiple_models(adapter, payload: dict[str, object]) -> None:
+    payload["modelUsage"] = {"model-z": {}, "model-a": {}}
+
+    result = adapter.parse(json.dumps(payload), "", 0, RunSpec(argv=[]))
+
+    assert result.model == "model-a,model-z"
 
 
 def test_claude_maps_access_to_permission_mode(tmp_path: Path) -> None:

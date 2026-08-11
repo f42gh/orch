@@ -8,6 +8,7 @@ evidence in place.
 from __future__ import annotations
 
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -184,6 +185,29 @@ def test_status_includes_the_live_log_tail(env) -> None:
     result = tool(server, "orch_status")(task_id=created["task_id"])
 
     assert "line two" in result["stdout_tail"]
+
+
+def test_status_serializes_model_and_quota_fields(env) -> None:
+    config, repo, _ = env
+    server = build_server(config)
+    created = tool(server, "orch_dispatch")(repo=str(repo), task="work")
+    reset = datetime(2026, 8, 18, 0, 47, 55, tzinfo=UTC)
+    TaskStore(config).update_task(
+        created["task_id"],
+        model="gpt-5.6-sol",
+        plan_type="plus",
+        quota_used_pct=4.0,
+        quota_window_minutes=10080,
+        quota_resets_at=reset,
+    )
+
+    result = tool(server, "orch_status")(task_id=created["task_id"])
+
+    assert result["model"] == "gpt-5.6-sol"
+    assert result["plan_type"] == "plus"
+    assert result["quota_used_pct"] == 4.0
+    assert result["quota_window_minutes"] == 10080
+    assert result["quota_resets_at"] == reset.isoformat()
 
 
 def test_status_of_an_unknown_task_says_so(env) -> None:

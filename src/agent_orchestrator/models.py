@@ -137,6 +137,11 @@ class Task:
     files_changed: int | None = None
     insertions: int | None = None
     deletions: int | None = None
+    model: str | None = None
+    plan_type: str | None = None
+    quota_used_pct: float | None = None
+    quota_window_minutes: int | None = None
+    quota_resets_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS workflow_tasks (
 ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("kind", "TEXT NOT NULL DEFAULT 'implement'"),
     ("engine", "TEXT"),
+    ("model", "TEXT"),
     ("engine_session_id", "TEXT"),
     ("parent_id", "TEXT"),
     ("base_ref", "TEXT"),
@@ -93,6 +94,10 @@ ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("started_at", "TEXT"),
     ("finished_at", "TEXT"),
     ("engine_ms", "INTEGER"),
+    ("plan_type", "TEXT"),
+    ("quota_used_pct", "REAL"),
+    ("quota_window_minutes", "INTEGER"),
+    ("quota_resets_at", "TEXT"),
     ("tokens_input", "INTEGER"),
     ("tokens_output", "INTEGER"),
     ("tokens_cache_read", "INTEGER"),
@@ -760,6 +765,7 @@ def row_to_task(row: sqlite3.Row) -> Task:
     kind = optional("kind")
     started_at = optional("started_at")
     finished_at = optional("finished_at")
+    quota_resets_at = optional("quota_resets_at")
     token_values = (
         optional_int("tokens_input"),
         optional_int("tokens_output"),
@@ -790,6 +796,7 @@ def row_to_task(row: sqlite3.Row) -> Task:
         updated_at=parse_datetime(row["updated_at"]),
         kind=TaskKind(kind) if kind else TaskKind.IMPLEMENT,
         engine=Engine(engine) if engine else None,
+        model=optional("model"),
         engine_session_id=optional("engine_session_id"),
         parent_id=optional("parent_id"),
         base_ref=optional("base_ref"),
@@ -800,6 +807,14 @@ def row_to_task(row: sqlite3.Row) -> Task:
         started_at=parse_datetime(str(started_at)) if started_at is not None else None,
         finished_at=parse_datetime(str(finished_at)) if finished_at is not None else None,
         engine_ms=optional_int("engine_ms"),
+        plan_type=optional("plan_type"),
+        quota_used_pct=optional("quota_used_pct"),
+        quota_window_minutes=optional_int("quota_window_minutes"),
+        quota_resets_at=(
+            parse_datetime(str(quota_resets_at))
+            if quota_resets_at is not None
+            else None
+        ),
         tokens=tokens,
         files_changed=optional_int("files_changed"),
         insertions=optional_int("insertions"),

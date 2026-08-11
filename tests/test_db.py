@@ -170,6 +170,29 @@ def test_missing_token_usage_round_trips_as_none(tmp_path: Path) -> None:
     assert stored.tokens is None
 
 
+def test_model_and_quota_fields_round_trip(tmp_path: Path) -> None:
+    store = TaskStore(Config(runtime_root=tmp_path))
+    task = store.add_task(tmp_path, "work")
+    resets_at = datetime(2026, 8, 18, 0, 47, 55, tzinfo=UTC)
+
+    store.update_task(
+        task.id,
+        model="gpt-5.6-sol",
+        plan_type="plus",
+        quota_used_pct=4.0,
+        quota_window_minutes=10080,
+        quota_resets_at=resets_at,
+    )
+
+    stored = store.get_task(task.id)
+    assert stored is not None
+    assert stored.model == "gpt-5.6-sol"
+    assert stored.plan_type == "plus"
+    assert stored.quota_used_pct == 4.0
+    assert stored.quota_window_minutes == 10080
+    assert stored.quota_resets_at == resets_at
+
+
 def test_list_tasks_filters_by_engine_kind_and_repo_path(tmp_path: Path) -> None:
     store = TaskStore(Config(runtime_root=tmp_path))
     first_repo = tmp_path / "first"

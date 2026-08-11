@@ -110,12 +110,22 @@ class ClaudeAdapter:
             text=text,
             exit_code=exit_code,
             session_id=payload.get("session_id"),
+            model=_model_name(payload.get("modelUsage")),
             usage=usage,
             cost_usd=float(cost) if isinstance(cost, (int, float)) else None,
             warnings=tuple(warnings),
             structured=_maybe_json(text),
             tokens=_normalise_tokens(usage),
         )
+
+
+def _model_name(model_usage: object) -> str | None:
+    if not isinstance(model_usage, dict) or not all(
+        isinstance(name, str) for name in model_usage
+    ):
+        return None
+    names = sorted(model_usage)
+    return ",".join(names) if names else None
 
 
 def _normalise_tokens(usage: dict[str, Any] | None) -> TokenUsage | None:

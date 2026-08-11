@@ -27,6 +27,7 @@ from agent_orchestrator.router import (
     resolve_policy,
 )
 from agent_orchestrator.secrets_scan import scan_task_artifacts
+from agent_orchestrator.session_logs import read_codex_session
 
 #: How long a killed process gets to exit before SIGKILL.
 TERM_GRACE_S = 10.0
@@ -95,11 +96,33 @@ def run_task(config: Config, store: TaskStore, task: Task) -> TaskStatus:
     status = _status_for(result, timed_out)
     summary = result.text.strip() or f"{task.engine.value} produced no output"
     result_fields: dict[str, object] = {
-        "engine_session_id": result.session_id,
-        "cost_usd": result.cost_usd,
         "exit_code": exit_code,
         "engine_ms": engine_ms,
     }
+    for field, value in (
+        ("engine_session_id", result.session_id),
+        ("model", result.model),
+        ("cost_usd", result.cost_usd),
+    ):
+        if value is not None:
+            result_fields[field] = value
+    if task.engine is Engine.CODEX and result.session_id is not None:
+        # Codex is the only engine whose model and plan are absent from stdout but
+        # present on disk, so this filesystem-specific enrichment stays in the worker.
+        try:
+            session_info = read_codex_session(result.session_id)
+        except Exception:  # noqa: BLE001 - optional telemetry must never fail the task
+            session_info = None
+        if session_info is not None:
+            for field, value in (
+                ("model", session_info.model),
+                ("plan_type", session_info.plan_type),
+                ("quota_used_pct", session_info.quota_used_pct),
+                ("quota_window_minutes", session_info.quota_window_minutes),
+                ("quota_resets_at", session_info.quota_resets_at),
+            ):
+                if value is not None:
+                    result_fields[field] = value
     if result.tokens is not None:
         result_fields.update(
             tokens_input=result.tokens.input_tokens,

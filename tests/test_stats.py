@@ -25,12 +25,18 @@ def _task(
     status: TaskStatus,
     *,
     engine: Engine | None = Engine.CODEX,
+    model: str | None = None,
     kind: TaskKind = TaskKind.IMPLEMENT,
     repo: str = "/repo",
     cost_usd: float | None = None,
     tokens: TokenUsage | None = None,
     engine_ms: int | None = None,
     queue_wait_s: float | None = None,
+    finished_at: datetime | None = None,
+    plan_type: str | None = None,
+    quota_used_pct: float | None = None,
+    quota_window_minutes: int | None = None,
+    quota_resets_at: datetime | None = None,
 ) -> Task:
     return Task(
         id=task_id,
@@ -43,6 +49,7 @@ def _task(
         updated_at=CREATED_AT,
         kind=kind,
         engine=engine,
+        model=model,
         cost_usd=cost_usd,
         tokens=tokens,
         engine_ms=engine_ms,
@@ -51,6 +58,11 @@ def _task(
             if queue_wait_s is not None
             else None
         ),
+        finished_at=finished_at,
+        plan_type=plan_type,
+        quota_used_pct=quota_used_pct,
+        quota_window_minutes=quota_window_minutes,
+        quota_resets_at=quota_resets_at,
     )
 
 
@@ -176,6 +188,62 @@ def test_group_by_partitions_and_orders_groups() -> None:
     assert list(stats.groups) == ["codex", "-", "grok"]
     assert stats.groups["codex"].tasks == 2
     assert stats.groups["-"].by_status == {"running": 1}
+
+
+def test_group_by_model_partitions_unknown_models_under_dash() -> None:
+    stats = build_stats(
+        [
+            _task("task-1", TaskStatus.NEEDS_REVIEW, model="gpt-5.6-sol"),
+            _task("task-2", TaskStatus.FAILED, model="gpt-5.6-sol"),
+            _task("task-3", TaskStatus.RUNNING, model=None),
+        ],
+        group_by="model",
+    )
+
+    assert list(stats.groups) == ["gpt-5.6-sol", "-"]
+    assert stats.groups["gpt-5.6-sol"].tasks == 2
+    assert stats.groups["-"].tasks == 1
+
+
+def test_quota_snapshots_take_the_latest_task_per_engine_without_summing() -> None:
+    reset = datetime(2026, 8, 18, 0, 47, 55, tzinfo=UTC)
+    stats = build_stats(
+        [
+            _task(
+                "task-1",
+                TaskStatus.NEEDS_REVIEW,
+                finished_at=CREATED_AT + timedelta(hours=1),
+                plan_type="plus",
+                quota_used_pct=3.0,
+                quota_window_minutes=10080,
+                quota_resets_at=reset,
+            ),
+            _task(
+                "task-2",
+                TaskStatus.NEEDS_REVIEW,
+                finished_at=CREATED_AT + timedelta(hours=2),
+                plan_type="plus",
+                quota_used_pct=4.0,
+                quota_window_minutes=10080,
+                quota_resets_at=reset,
+            ),
+            _task(
+                "task-3",
+                TaskStatus.NEEDS_REVIEW,
+                engine=Engine.GROK,
+                finished_at=CREATED_AT + timedelta(hours=1),
+                plan_type="team",
+                quota_used_pct=8.0,
+                quota_window_minutes=300,
+            ),
+        ]
+    )
+
+    assert stats.quota_snapshots["codex"].used_pct == 4.0
+    assert stats.quota_snapshots["codex"].resets_at == reset
+    assert stats.quota_snapshots["grok"].used_pct == 8.0
+    assert not hasattr(stats.totals, "quota_used_pct")
+    assert stats.describe()["quota_snapshots"]["codex"]["used_pct"] == 4.0
 
 
 def test_unknown_group_by_is_rejected() -> None:
