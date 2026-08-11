@@ -23,7 +23,7 @@ from agent_orchestrator.db import TaskStore
 from agent_orchestrator.dispatch import DispatchError
 from agent_orchestrator.engines.base import Capabilities
 from agent_orchestrator.mcp_server import build_server
-from agent_orchestrator.models import Engine, FallbackMode, TaskKind
+from agent_orchestrator.models import Engine, FallbackMode, TaskKind, TaskStatus
 from agent_orchestrator.workflows import WorkflowError
 
 
@@ -91,11 +91,36 @@ def test_cli_parser_exposes_documented_commands_and_positional_run_id() -> None:
             "--force",
         ]
     )
+    stats = parser.parse_args(
+        [
+            "stats",
+            "--repo",
+            "/repo",
+            "--workflow",
+            "run-0001",
+            "--engine",
+            "agy",
+            "--kind",
+            "implement",
+            "--since",
+            "2026-01-01T00:00:00+00:00",
+            "--until",
+            "2026-02-01T00:00:00+00:00",
+            "--group-by",
+            "engine",
+            "--json",
+        ]
+    )
 
     assert (run.run_id, run.parent) == ("run-0001", "task-0001")
     assert batch.tasks_file == "-"
     assert install.force is True
     assert install.locale == "ja"
+    assert stats.command == "stats"
+    assert stats.workflow_id == "run-0001"
+    assert stats.engine == "agy"
+    assert stats.group_by == "engine"
+    assert stats.json is True
     assert parser.parse_args(["start"]).command == "start"
     assert parser.parse_args(["run", "create", "--repo", "/repo"]).run_command == "create"
     assert parser.parse_args(["run", "list"]).run_command == "list"
@@ -221,6 +246,60 @@ def test_mcp_registers_exact_workflow_tool_names(workflow_env) -> None:
     assert "orch_dispatch" in names
 
 
+def test_mcp_registers_orch_stats(workflow_env) -> None:
+    config, _, _, _ = workflow_env
+    names = set(build_server(config)._tool_manager._tools)  # noqa: SLF001
+
+    assert "orch_stats" in names
+
+
+def test_cli_stats_json_is_parseable_and_accepts_agy_alias(
+    workflow_env,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, store, repo, _ = workflow_env
+    task = store.add_task(repo, "work", engine=Engine.ANTIGRAVITY)
+    store.set_status(task.id, TaskStatus.NEEDS_REVIEW)
+    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+
+    main(["stats", "--engine", "agy", "--group-by", "engine", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["totals"]["tasks"] == 1
+    assert payload["totals"]["success_rate"] == 1.0
+    assert list(payload["groups"]) == ["antigravity"]
+
+
+def test_cli_stats_rejects_a_bad_iso_datetime(
+    workflow_env,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, _, _, _ = workflow_env
+    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+
+    with pytest.raises(SystemExit, match="invalid --since datetime.*ISO 8601"):
+        main(["stats", "--since", "not-a-date"])
+
+
+def test_cli_stats_human_output_marks_partial_cost_and_uses_seconds(
+    workflow_env,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, store, repo, _ = workflow_env
+    task = store.add_task(repo, "work", engine=Engine.CODEX)
+    store.update_task(task.id, status=TaskStatus.NEEDS_REVIEW, engine_ms=1_500)
+    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+
+    main(["stats"])
+    output = capsys.readouterr().out
+
+    assert "cost_usd: 0.0000 (0/1 terminal tasks reported; no cost from codex)" in output
+    assert "engine_s_total: 1.5" in output
+    assert "engine_ms" not in output
+
+
 def test_mcp_run_lifecycle_uses_ordered_snapshot_and_parent(workflow_env) -> None:
     config, _, repo, _ = workflow_env
     server = build_server(config)
@@ -250,6 +329,7 @@ def test_mcp_run_lifecycle_uses_ordered_snapshot_and_parent(workflow_env) -> Non
     assert shown["task_ids"] == [dispatched["task_id"]]
     assert shown["tasks"][0]["priority"] == "high"
     assert shown["tasks"][0]["base_ref"] == "main"
+    assert shown["totals"]["tasks"] == 1
     assert [workflow["workflow_id"] for workflow in listed["workflows"]] == [
         created["workflow_id"]
     ]

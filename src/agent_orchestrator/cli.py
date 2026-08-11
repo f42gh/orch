@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -31,6 +32,7 @@ from agent_orchestrator.models import (
     WorkflowType,
 )
 from agent_orchestrator.router import load_routing_table
+from agent_orchestrator.stats import Stats, Totals, build_stats, summarize
 from agent_orchestrator.workflows import (
     DispatchedBatch,
     DispatchedWorkflowTask,
@@ -110,6 +112,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("list", help="list tasks")
+    stats_parser = subparsers.add_parser("stats", help="summarize task outcomes and usage")
+    stats_parser.add_argument("--json", action="store_true", help="print one JSON object")
+    stats_parser.add_argument("--repo", default=None)
+    stats_parser.add_argument("--workflow", dest="workflow_id", default=None)
+    stats_parser.add_argument(
+        "--engine",
+        default=None,
+        help="filter by engine; accepts agy as an alias for antigravity",
+    )
+    stats_parser.add_argument("--kind", choices=[kind.value for kind in TaskKind], default=None)
+    stats_parser.add_argument("--since", metavar="ISO", default=None)
+    stats_parser.add_argument("--until", metavar="ISO", default=None)
+    stats_parser.add_argument(
+        "--group-by",
+        choices=["engine", "kind", "status", "repo"],
+        default=None,
+    )
     engines_parser = subparsers.add_parser(
         "engines", help="show installed engines and the routing table"
     )
@@ -218,6 +237,17 @@ def _parse_kind(value: str) -> TaskKind:
     except ValueError:
         allowed = ", ".join(kind.value for kind in TaskKind)
         raise WorkflowError(f"task kind {value!r} is not one of: {allowed}") from None
+
+
+def _parse_iso_datetime(value: str | None, option: str) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        raise WorkflowError(
+            f"invalid {option} datetime {value!r}; expected ISO 8601"
+        ) from None
 
 
 def _parse_assignment(value: str, *, shape: str) -> tuple[str, str]:
@@ -370,6 +400,7 @@ def _workflow_details_payload(details: WorkflowDetails) -> dict[str, Any]:
         "routes": routes,
         "task_ids": [task["task_id"] for task in tasks],
         "tasks": tasks,
+        "totals": summarize(details.tasks).describe(),
     }
 
 
@@ -399,10 +430,133 @@ def _print_json(payload: object) -> None:
     print(json.dumps(payload, ensure_ascii=False))
 
 
+def _format_cost(totals: Totals) -> str:
+    """Never print the total alone: codex and antigravity report no cost at all.
+
+    A bare figure reads as the whole bill, so the reported fraction always travels with
+    it, and the engines responsible for the gap are named whenever there is one.
+    """
+    coverage = f"{totals.cost_reported_tasks}/{totals.terminal} terminal tasks reported"
+    if totals.cost_unreported_tasks:
+        missing = ", ".join(totals.engines_without_cost) or "unknown"
+        coverage = f"{coverage}; no cost from {missing}"
+    return f"{totals.cost_usd:.4f} ({coverage})"
+
+
+def _format_rate(value: float | None) -> str:
+    return f"{value:.1%}" if value is not None else "-"
+
+
+def _format_ms_seconds(value: int | None) -> str:
+    return f"{value / 1000:.1f}" if value is not None else "-"
+
+
+def _print_stats(stats: Stats) -> None:
+    totals = stats.totals
+    statuses = ", ".join(
+        f"{status}={count}" for status, count in totals.by_status.items()
+    ) or "-"
+    print(f"tasks: {totals.tasks}")
+    print(f"by_status: {statuses}")
+    print(f"terminal: {totals.terminal}")
+    print(f"in_flight: {totals.in_flight}")
+    print(f"completed: {totals.completed}")
+    print(f"failed: {totals.failed}")
+    print(f"cancelled: {totals.cancelled}")
+    print(f"success_rate: {_format_rate(totals.success_rate)}")
+    print(f"cost_usd: {_format_cost(totals)}")
+    print(
+        f"tokens: {totals.tokens.total} "
+        f"({totals.tokens_reported_tasks}/{totals.tasks} tasks reported; "
+        f"input={totals.tokens.input_tokens}, output={totals.tokens.output_tokens}, "
+        f"cache_read={totals.tokens.cache_read_tokens}, "
+        f"cache_write={totals.tokens.cache_write_tokens}, "
+        f"reasoning={totals.tokens.reasoning_tokens})"
+    )
+    print(f"engine_s_total: {_format_ms_seconds(totals.engine_ms_total)}")
+    print(f"engine_s_p50: {_format_ms_seconds(totals.engine_ms_p50)}")
+    print(f"engine_s_p95: {_format_ms_seconds(totals.engine_ms_p95)}")
+    queue_wait = (
+        f"{totals.queue_wait_s_p50:.1f}"
+        if totals.queue_wait_s_p50 is not None
+        else "-"
+    )
+    print(f"queue_wait_s_p50: {queue_wait}")
+    print(f"files_changed: {totals.files_changed}")
+    print(f"insertions: {totals.insertions}")
+    print(f"deletions: {totals.deletions}")
+
+    if stats.group_by is None:
+        return
+    print(
+        f"\n{stats.group_by}\ttasks\tterminal\tcompleted\tfailed\tcancelled\t"
+        "in_flight\tsuccess_rate\tcost_usd\ttokens\tengine_s_total\t"
+        "engine_s_p50\tengine_s_p95\tqueue_wait_s_p50\tfiles_changed\t"
+        "insertions\tdeletions"
+    )
+    for key, group in stats.groups.items():
+        group_queue_wait = (
+            f"{group.queue_wait_s_p50:.1f}"
+            if group.queue_wait_s_p50 is not None
+            else "-"
+        )
+        print(
+            f"{key}\t{group.tasks}\t{group.terminal}\t{group.completed}\t"
+            f"{group.failed}\t{group.cancelled}\t{group.in_flight}\t"
+            f"{_format_rate(group.success_rate)}\t{_format_cost(group)}\t"
+            f"{group.tokens.total}\t{_format_ms_seconds(group.engine_ms_total)}\t"
+            f"{_format_ms_seconds(group.engine_ms_p50)}\t"
+            f"{_format_ms_seconds(group.engine_ms_p95)}\t{group_queue_wait}\t"
+            f"{group.files_changed}\t{group.insertions}\t{group.deletions}"
+        )
+
+
+def _handle_stats(store: TaskStore, args: argparse.Namespace) -> None:
+    try:
+        engine = _parse_engine(args.engine) if args.engine else None
+        since = _parse_iso_datetime(args.since, "--since")
+        until = _parse_iso_datetime(args.until, "--until")
+        stats = build_stats(
+            store.list_tasks(
+                engine=engine,
+                kind=TaskKind(args.kind) if args.kind else None,
+                repo_path=Path(args.repo) if args.repo else None,
+                since=since,
+                until=until,
+                workflow_id=args.workflow_id,
+            ),
+            group_by=args.group_by,
+        )
+    except (WorkflowError, ValueError) as exc:
+        raise SystemExit(str(exc)) from None
+
+    if args.json:
+        _print_json(stats.describe())
+    else:
+        _print_stats(stats)
+
+
 def _print_workflow(payload: Mapping[str, Any]) -> None:
     print(f"{payload.get('type', 'workflow')} {payload.get('workflow_id', '?')}")
     print(f"status: {payload.get('status', '-')}")
     print(f"repo: {payload.get('repo', '-')}")
+    totals = payload.get("totals")
+    if isinstance(totals, Mapping):
+        coverage = (
+            f"{totals.get('cost_reported_tasks', 0)}/{totals.get('terminal', 0)} "
+            "terminal tasks reported"
+        )
+        if int(totals.get("cost_unreported_tasks", 0)):
+            engines_without_cost = totals.get("engines_without_cost") or []
+            missing = ", ".join(str(engine) for engine in engines_without_cost) or "unknown"
+            coverage = f"{coverage}; no cost from {missing}"
+        print(
+            f"totals: {totals.get('tasks', 0)} tasks; "
+            f"{totals.get('completed', 0)} completed; "
+            f"{totals.get('failed', 0)} failed; "
+            f"{totals.get('cancelled', 0)} cancelled; "
+            f"cost_usd {float(totals.get('cost_usd', 0.0)):.4f} ({coverage})"
+        )
     for route in payload.get("routes") or []:
         kind = route["kind"]
         primary = route["primary"]
@@ -809,6 +963,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                 f"{task.engine.value if task.engine else '-'}\t{task.risk.value}\t"
                 f"{task.priority.value}\t{cost}\t{short}"
             )
+        return
+
+    if args.command == "stats":
+        _handle_stats(store, args)
         return
 
     if args.command == "engines":

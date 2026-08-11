@@ -50,6 +50,7 @@ from agent_orchestrator.models import (
 )
 from agent_orchestrator.router import load_routing_table
 from agent_orchestrator.result import save_git_diff
+from agent_orchestrator.stats import build_stats, summarize
 from agent_orchestrator.workflows import (
     DispatchedBatch,
     DispatchedWorkflowTask,
@@ -99,6 +100,17 @@ def _parse_engine(value: str | None) -> Engine | None:
     except ValueError:
         allowed = ", ".join([*(engine.value for engine in Engine), "agy"])
         raise DispatchError(f"engine {value!r} is not one of: {allowed}") from None
+
+
+def _parse_iso_datetime(value: str | None, field: str) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        raise DispatchError(
+            f"invalid {field} datetime {value!r}; expected ISO 8601"
+        ) from None
 
 
 def _parse_workflow_routes(
@@ -215,6 +227,7 @@ def _workflow_details(config: Config, details: WorkflowDetails) -> dict[str, Any
         "routes": routes,
         "task_ids": [task["task_id"] for task in tasks],
         "tasks": tasks,
+        "totals": summarize(details.tasks).describe(),
     }
 
 
@@ -489,6 +502,36 @@ def build_server(config: Config) -> MCPServer:
         parsed = _parse(TaskStatus, status) if status else None
         tasks = store.list_tasks(status=parsed, parent_id=parent_id)
         return {"tasks": [_serialize(config, task) for task in tasks]}
+
+    @server.tool(
+        description=(
+            "Aggregate task outcomes, token usage, durations, and change counts, with "
+            "optional filters and grouping. The cost total covers only engines that "
+            "report cost; coverage counts and engines without cost are always included."
+        )
+    )
+    def orch_stats(
+        repo: str | None = None,
+        workflow_id: str | None = None,
+        engine: str | None = None,
+        kind: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        group_by: str | None = None,
+    ) -> dict[str, Any]:
+        parsed_kind = _parse(TaskKind, kind) if kind else None
+        tasks = _store(config).list_tasks(
+            engine=_parse_engine(engine),
+            kind=parsed_kind,
+            repo_path=Path(repo) if repo else None,
+            since=_parse_iso_datetime(since, "since"),
+            until=_parse_iso_datetime(until, "until"),
+            workflow_id=workflow_id,
+        )
+        try:
+            return build_stats(tasks, group_by=group_by).describe()
+        except ValueError as exc:
+            raise DispatchError(str(exc)) from None
 
     @server.tool(
         description=(
