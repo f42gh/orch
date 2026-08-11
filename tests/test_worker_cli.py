@@ -18,7 +18,7 @@ import pytest
 from agent_orchestrator.config import Config
 from agent_orchestrator.db import TaskStore
 from agent_orchestrator.engines.base import Capabilities, EngineResult, RunSpec
-from agent_orchestrator.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus
+from agent_orchestrator.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus, TokenUsage
 from agent_orchestrator.worker_cli import _spawn, run_task
 
 
@@ -133,6 +133,8 @@ class StubAdapter:
                 usage=self.result.usage,
                 cost_usd=self.result.cost_usd,
                 warnings=self.result.warnings,
+                structured=self.result.structured,
+                tokens=self.result.tokens,
             )
         return EngineResult(text=stdout.strip(), exit_code=exit_code, cost_usd=0.5)
 
@@ -173,6 +175,12 @@ def test_successful_run_records_diff_cost_and_needs_review(
     assert stored.status == TaskStatus.NEEDS_REVIEW
     assert stored.cost_usd == 0.5
     assert stored.exit_code == 0
+    assert stored.engine_ms is not None
+    assert stored.engine_ms >= 0
+    assert stored.tokens is None
+    assert stored.files_changed == 1
+    assert stored.insertions == 1
+    assert stored.deletions == 0
 
     payload = json.loads((config.logs_dir / task.id / "result.json").read_text(encoding="utf-8"))
     assert payload["engine"] == "codex"
@@ -180,6 +188,30 @@ def test_successful_run_records_diff_cost_and_needs_review(
 
     diff = (config.logs_dir / task.id / "diff.patch").read_text(encoding="utf-8")
     assert "added.py" in diff
+
+
+def test_reported_tokens_are_persisted(
+    prepared: tuple[Config, TaskStore, Task], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, store, task = prepared
+    tokens = TokenUsage(
+        input_tokens=11,
+        output_tokens=12,
+        cache_read_tokens=13,
+        cache_write_tokens=14,
+        reasoning_tokens=15,
+    )
+    adapter = StubAdapter(
+        "printf 'done\n'",
+        EngineResult(text="done", exit_code=0, tokens=tokens),
+    )
+    monkeypatch.setattr("agent_orchestrator.worker_cli.get_adapter", lambda engine: adapter)
+
+    run_task(config, store, task)
+
+    stored = store.get_task(task.id)
+    assert stored is not None
+    assert stored.tokens == tokens
 
 
 def test_nonzero_exit_fails_the_task(
@@ -265,6 +297,12 @@ def test_missing_binary_fails_cleanly(
     assert run_task(config, store, task) == TaskStatus.FAILED
     stored = store.get_task(task.id)
     assert stored is not None
+    assert stored.status == TaskStatus.FAILED
+    assert stored.engine_ms is not None
+    assert stored.engine_ms >= 0
+    assert stored.files_changed == 0
+    assert stored.insertions == 0
+    assert stored.deletions == 0
     assert "failed to start" in (stored.error or "")
 
 

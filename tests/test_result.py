@@ -13,7 +13,13 @@ from pathlib import Path
 
 from agent_orchestrator.config import Config
 from agent_orchestrator.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus
-from agent_orchestrator.result import changed_files, diff_stat, save_git_diff, write_result_json
+from agent_orchestrator.result import (
+    changed_files,
+    diff_numstat,
+    diff_stat,
+    save_git_diff,
+    write_result_json,
+)
 
 
 def init_repo(path: Path) -> None:
@@ -91,14 +97,63 @@ def test_clean_workspace_produces_an_empty_diff(tmp_path: Path) -> None:
     assert diff.read_text(encoding="utf-8").strip() == ""
 
 
+def test_numstat_counts_created_modified_and_deleted_files(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    init_repo(workspace)
+    (workspace / "removed.txt").write_text("one\ntwo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "removed.txt"], cwd=workspace, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "add removable file"],
+        cwd=workspace,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+
+    (workspace / "README.md").write_text("# changed\n", encoding="utf-8")
+    (workspace / "added.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
+    (workspace / "removed.txt").unlink()
+
+    stat = diff_numstat(workspace)
+
+    assert stat.files_changed == 3
+    assert stat.insertions == 3
+    assert stat.deletions == 3
+    assert set(stat.files) == {"README.md", "added.py", "removed.txt"}
+
+
+def test_numstat_counts_binary_files_without_line_totals(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    init_repo(workspace)
+    (workspace / "image.bin").write_bytes(b"\x00\x01binary payload")
+
+    stat = diff_numstat(workspace)
+
+    assert stat.files_changed == 1
+    assert stat.insertions == 0
+    assert stat.deletions == 0
+    assert stat.files == ("image.bin",)
+
+
 def test_changed_files_and_stat_see_new_files(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     workspace.mkdir()
     init_repo(workspace)
+    (workspace / "removed.txt").write_text("remove me\n", encoding="utf-8")
+    subprocess.run(["git", "add", "removed.txt"], cwd=workspace, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "add removable file"],
+        cwd=workspace,
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    (workspace / "README.md").write_text("# modified\n", encoding="utf-8")
     (workspace / "added.py").write_text("x = 1\n", encoding="utf-8")
+    (workspace / "removed.txt").unlink()
     save_git_diff(Config(runtime_root=tmp_path / "runtime"), "task-0001", workspace)
 
-    assert "added.py" in changed_files(workspace)
+    assert changed_files(workspace) == ["README.md", "added.py", "removed.txt"]
     assert "added.py" in diff_stat(workspace)
 
 
@@ -129,8 +184,15 @@ def test_result_json_records_engine_cost_and_diffstat(tmp_path: Path) -> None:
     assert payload["kind"] == "implement"
     assert payload["cost_usd"] == 0.25
     assert payload["branch_name"] == "agent/codex/task-0001"
-    assert "added.py" in payload["changed_files"]
+    assert payload["changed_files"] == ["added.py"]
+    assert isinstance(payload["changed_files"], list)
+    assert isinstance(payload["diffstat"], str)
     assert "added.py" in payload["diffstat"]
+    assert payload["diff_numstat"] == {
+        "files_changed": 1,
+        "insertions": 1,
+        "deletions": 0,
+    }
     assert payload["warnings"] == ["check this"]
 
 

@@ -19,7 +19,7 @@ from agent_orchestrator.engines import EngineResult, RunSpec, get_adapter
 from agent_orchestrator.logging_utils import append_log, task_log_dir
 from agent_orchestrator.models import Engine, Task, TaskStatus
 from agent_orchestrator.prompts import build_prompt, schema_for
-from agent_orchestrator.result import save_git_diff, write_result_json
+from agent_orchestrator.result import DiffStat, diff_numstat, save_git_diff, write_result_json
 from agent_orchestrator.router import (
     EnginePolicy,
     RoutingTable,
@@ -65,12 +65,24 @@ def run_task(config: Config, store: TaskStore, task: Task) -> TaskStatus:
 
     _log_header(agent_log, task, policy, spec, prompt)
 
+    # Adapter-reported durations exist for Claude and Antigravity, but timing only the
+    # spawn is comparable across all four engines and excludes worktree and prompt setup.
+    engine_started = time.monotonic()
     try:
-        stdout, stderr, exit_code, timed_out = _spawn(spec, Path(task.workspace_path), stdout_log, stderr_log, policy.timeout_s)
+        stdout, stderr, exit_code, timed_out = _spawn(
+            spec,
+            Path(task.workspace_path),
+            stdout_log,
+            stderr_log,
+            policy.timeout_s,
+        )
     except OSError as exc:
+        engine_ms = int((time.monotonic() - engine_started) * 1000)
         message = f"failed to start {task.engine.value}: {exc}"
         append_log(stderr_log, message)
+        store.update_task(task.id, engine_ms=engine_ms)
         return _finish(config, store, task, TaskStatus.FAILED, message, warnings=[str(exc)])
+    engine_ms = int((time.monotonic() - engine_started) * 1000)
 
     result = adapter.parse(stdout, stderr, exit_code, spec)
     warnings = list(result.warnings)
@@ -82,12 +94,21 @@ def run_task(config: Config, store: TaskStore, task: Task) -> TaskStatus:
 
     status = _status_for(result, timed_out)
     summary = result.text.strip() or f"{task.engine.value} produced no output"
-    store.update_task(
-        task.id,
-        engine_session_id=result.session_id,
-        cost_usd=result.cost_usd,
-        exit_code=exit_code,
-    )
+    result_fields: dict[str, object] = {
+        "engine_session_id": result.session_id,
+        "cost_usd": result.cost_usd,
+        "exit_code": exit_code,
+        "engine_ms": engine_ms,
+    }
+    if result.tokens is not None:
+        result_fields.update(
+            tokens_input=result.tokens.input_tokens,
+            tokens_output=result.tokens.output_tokens,
+            tokens_cache_read=result.tokens.cache_read_tokens,
+            tokens_cache_write=result.tokens.cache_write_tokens,
+            tokens_reasoning=result.tokens.reasoning_tokens,
+        )
+    store.update_task(task.id, **result_fields)
     return _finish(
         config,
         store,
@@ -120,6 +141,12 @@ def _finish(
     commands_run: list[str] | None = None,
     result: EngineResult | None = None,
 ) -> TaskStatus:
+    workspace = Path(task.workspace_path) if task.workspace_path else None
+    diff = (
+        diff_numstat(workspace)
+        if workspace is not None and workspace.exists()
+        else DiffStat(files_changed=0, insertions=0, deletions=0, files=())
+    )
     write_result_json(
         config,
         task,
@@ -131,9 +158,18 @@ def _finish(
         usage=result.usage if result else None,
         cost_usd=result.cost_usd if result else None,
         structured=result.structured if result else None,
+        diff=diff,
     )
     error = summary if status == TaskStatus.FAILED else None
-    store.update_task(task.id, status=status, result_summary=summary, error=error)
+    store.update_task(
+        task.id,
+        status=status,
+        result_summary=summary,
+        error=error,
+        files_changed=diff.files_changed,
+        insertions=diff.insertions,
+        deletions=diff.deletions,
+    )
     return status
 
 

@@ -23,6 +23,7 @@ import signal
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -248,6 +249,7 @@ def _workflow_call[T](call: Any, *args: Any, **kwargs: Any) -> T:
 
 def _serialize(config: Config, task: Task) -> dict[str, Any]:
     log_dir = config.logs_dir / task.id
+    tokens = task.tokens
     return {
         "task_id": task.id,
         "status": task.status.value,
@@ -265,6 +267,24 @@ def _serialize(config: Config, task: Task) -> dict[str, Any]:
         "exit_code": task.exit_code,
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat(),
+        "started_at": task.started_at.isoformat() if task.started_at else None,
+        "finished_at": task.finished_at.isoformat() if task.finished_at else None,
+        "engine_ms": task.engine_ms,
+        "files_changed": task.files_changed,
+        "insertions": task.insertions,
+        "deletions": task.deletions,
+        "tokens": (
+            {
+                "input_tokens": tokens.input_tokens,
+                "output_tokens": tokens.output_tokens,
+                "cache_read_tokens": tokens.cache_read_tokens,
+                "cache_write_tokens": tokens.cache_write_tokens,
+                "reasoning_tokens": tokens.reasoning_tokens,
+                "total": tokens.total,
+            }
+            if tokens is not None
+            else None
+        ),
         "log_path": str(log_dir),
         "error": task.error,
     }
@@ -362,9 +382,27 @@ def build_server(config: Config) -> MCPServer:
     def orch_status(task_id: str) -> dict[str, Any]:
         task = _require(config, task_id)
         log_dir = config.logs_dir / task_id
+        # Older rows have no started_at, so derived durations stay null instead of
+        # silently relabelling queue time as execution time.
+        queue_wait_s = (
+            round((task.started_at - task.created_at).total_seconds(), 1)
+            if task.started_at is not None
+            else None
+        )
+        if task.started_at is None:
+            elapsed_s = None
+        elif task.status in TERMINAL_STATUSES:
+            elapsed_s = (
+                round((task.finished_at - task.started_at).total_seconds(), 1)
+                if task.finished_at is not None
+                else None
+            )
+        else:
+            elapsed_s = round((datetime.now(UTC) - task.started_at).total_seconds(), 1)
         return {
             **_serialize(config, task),
-            "elapsed_s": round((task.updated_at - task.created_at).total_seconds(), 1),
+            "queue_wait_s": queue_wait_s,
+            "elapsed_s": elapsed_s,
             "stdout_tail": _tail(log_dir / "stdout.log"),
             "stderr_tail": _tail(log_dir / "stderr.log"),
         }

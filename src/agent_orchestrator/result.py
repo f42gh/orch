@@ -4,6 +4,7 @@ import os
 import subprocess
 import tempfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -29,6 +30,14 @@ NOISE_PATHSPECS: tuple[str, ...] = (
     ":(exclude,glob)**/node_modules/**",
     ":(exclude,glob)**/.DS_Store",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class DiffStat:
+    files_changed: int
+    insertions: int
+    deletions: int
+    files: tuple[str, ...]
 
 
 def _git(
@@ -84,11 +93,35 @@ def diff_stat(workspace_path: Path) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def changed_files(workspace_path: Path) -> list[str]:
-    result = _diff(workspace_path, "diff", "--name-only", "HEAD")
+def diff_numstat(workspace_path: Path) -> DiffStat:
+    result = _diff(workspace_path, "diff", "--numstat", "HEAD")
     if result.returncode != 0:
-        return []
-    return [line for line in result.stdout.splitlines() if line.strip()]
+        return DiffStat(files_changed=0, insertions=0, deletions=0, files=())
+
+    insertions = 0
+    deletions = 0
+    files: list[str] = []
+    for line in result.stdout.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3 or not parts[2]:
+            continue
+        added, deleted, path = parts
+        # Git reports binary counts as "-"; the file still matters to reviewers, but
+        # treating its non-numeric byte delta as lines would make totals unusable.
+        insertions += int(added) if added.isdecimal() else 0
+        deletions += int(deleted) if deleted.isdecimal() else 0
+        files.append(path)
+
+    return DiffStat(
+        files_changed=len(files),
+        insertions=insertions,
+        deletions=deletions,
+        files=tuple(files),
+    )
+
+
+def changed_files(workspace_path: Path) -> list[str]:
+    return list(diff_numstat(workspace_path).files)
 
 
 def _diff(workspace_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -121,11 +154,20 @@ def write_result_json(
     usage: dict[str, Any] | None = None,
     cost_usd: float | None = None,
     structured: dict[str, Any] | None = None,
+    diff: DiffStat | None = None,
 ) -> Path:
     log_dir = task_log_dir(config, task.id)
     diff_path = log_dir / "diff.patch"
     result_path = log_dir / "result.json"
     workspace = Path(task.workspace_path) if task.workspace_path else None
+    workspace_exists = workspace is not None and workspace.exists()
+    measured_diff = diff
+    if measured_diff is None:
+        measured_diff = (
+            diff_numstat(workspace)
+            if workspace_exists
+            else DiffStat(files_changed=0, insertions=0, deletions=0, files=())
+        )
     write_json(
         result_path,
         {
@@ -136,8 +178,13 @@ def write_result_json(
             "workspace_path": str(task.workspace_path) if task.workspace_path else None,
             "branch_name": task.branch_name,
             "diff_path": str(diff_path),
-            "diffstat": diff_stat(workspace) if workspace and workspace.exists() else "",
-            "changed_files": changed_files(workspace) if workspace and workspace.exists() else [],
+            "diffstat": diff_stat(workspace) if workspace_exists else "",
+            "changed_files": list(measured_diff.files),
+            "diff_numstat": {
+                "files_changed": measured_diff.files_changed,
+                "insertions": measured_diff.insertions,
+                "deletions": measured_diff.deletions,
+            },
             "summary": summary,
             "structured": structured,
             "usage": usage,
