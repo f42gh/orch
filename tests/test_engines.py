@@ -17,7 +17,7 @@ from agent_orchestrator.engines.base import Capabilities, RunSpec
 from agent_orchestrator.engines.claude import ClaudeAdapter
 from agent_orchestrator.engines.codex import CodexAdapter
 from agent_orchestrator.engines.grok import GrokAdapter
-from agent_orchestrator.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus
+from agent_orchestrator.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus, TokenUsage
 from agent_orchestrator.router import AccessLevel, EnginePolicy
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -67,6 +67,13 @@ def test_codex_parses_recorded_jsonl(tmp_path: Path) -> None:
     assert result.session_id == "019fea4e-fc67-71f0-b4da-d38860067426"
     assert result.usage is not None
     assert result.usage["input_tokens"] == 29879
+    assert result.tokens == TokenUsage(
+        input_tokens=4791,
+        cache_read_tokens=25088,
+        cache_write_tokens=0,
+        output_tokens=175,
+        reasoning_tokens=43,
+    )
     # codex reports no cost; inventing one would corrupt the budget view.
     assert result.cost_usd is None
     assert result.warnings == ()
@@ -94,6 +101,19 @@ def test_codex_survives_a_truncated_stream(tmp_path: Path) -> None:
     assert result.text == "partial work"
     assert result.session_id == "abc"
     assert any("unparseable JSONL" in warning for warning in result.warnings)
+
+
+def test_codex_clamps_input_when_cached_tokens_exceed_it() -> None:
+    stdout = (
+        '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}\n'
+        '{"type":"turn.completed","usage":{"input_tokens":2,"cached_input_tokens":5}}'
+    )
+
+    result = CodexAdapter().parse(stdout, "", 0, RunSpec(argv=[]))
+
+    assert result.tokens is not None
+    assert result.tokens.input_tokens == 0
+    assert any("cached-input convention did not hold" in warning for warning in result.warnings)
 
 
 def test_codex_command_maps_access_to_sandbox(tmp_path: Path) -> None:
@@ -132,16 +152,47 @@ def test_grok_parses_recorded_json() -> None:
     assert result.session_id
     assert result.cost_usd is not None and result.cost_usd > 0
     assert result.usage is not None
+    assert result.tokens == TokenUsage(
+        input_tokens=2807,
+        cache_read_tokens=24960,
+        cache_write_tokens=0,
+        output_tokens=139,
+        reasoning_tokens=55,
+    )
     assert result.warnings == ()
 
 
 def test_grok_drops_cost_when_the_server_calls_it_partial() -> None:
-    stdout = '{"text":"ok","stopReason":"end_turn","total_cost_usd":0.5,"cost_is_partial":true}'
+    stdout = json.dumps(
+        {
+            "text": "ok",
+            "stopReason": "end_turn",
+            "total_cost_usd": 0.5,
+            "cost_is_partial": True,
+            "usage": {"input_tokens": 7, "output_tokens": 3},
+        }
+    )
 
     result = GrokAdapter().parse(stdout, "", 0, RunSpec(argv=[]))
 
     assert result.cost_usd is None
+    assert result.tokens == TokenUsage(input_tokens=7, output_tokens=3)
     assert any("partial" in warning for warning in result.warnings)
+
+
+def test_grok_prefers_exact_cost_ticks_over_the_float() -> None:
+    stdout = json.dumps(
+        {
+            "text": "ok",
+            "stopReason": "end_turn",
+            "total_cost_usd_ticks": 100_000_000,
+            "total_cost_usd": 0.5,
+        }
+    )
+
+    result = GrokAdapter().parse(stdout, "", 0, RunSpec(argv=[]))
+
+    assert result.cost_usd == pytest.approx(0.01)
 
 
 def test_grok_flags_an_early_stop() -> None:
@@ -183,6 +234,7 @@ def test_antigravity_parses_plain_text() -> None:
     assert "calc.py" in result.text
     assert result.session_id is None
     assert result.cost_usd is None
+    assert result.tokens is None
 
 
 def test_antigravity_notices_it_worked_on_the_wrong_tree() -> None:
@@ -234,7 +286,31 @@ def test_antigravity_parses_the_json_build(tmp_path: Path) -> None:
     assert result.session_id == "a04753fe-4d39-48a6-bd02-ba88fb0ce1f2"
     assert result.usage is not None
     assert result.usage["total_tokens"] == 28673
+    assert result.tokens == TokenUsage(
+        input_tokens=1368,
+        cache_read_tokens=27101,
+        cache_write_tokens=0,
+        output_tokens=204,
+        reasoning_tokens=0,
+    )
     assert result.warnings == ()
+
+
+def test_antigravity_clamps_input_when_cached_tokens_exceed_it() -> None:
+    adapter = AntigravityAdapter(capabilities=_agy_capabilities(structured=True))
+    stdout = json.dumps(
+        {
+            "status": "SUCCESS",
+            "response": "ok",
+            "usage": {"input_tokens": 2, "cache_read_tokens": 5},
+        }
+    )
+
+    result = adapter.parse(stdout, "", 0, RunSpec(argv=[]))
+
+    assert result.tokens is not None
+    assert result.tokens.input_tokens == 0
+    assert any("cached-input convention did not hold" in warning for warning in result.warnings)
 
 
 def test_antigravity_flags_a_non_success_status() -> None:
@@ -267,6 +343,13 @@ def test_claude_parses_recorded_json() -> None:
     assert result.text == "calc.py, README.md"
     assert result.session_id == "9a97504e-3898-47fa-b5c2-413b906a3d78"
     assert result.cost_usd == pytest.approx(0.0955896)
+    assert result.tokens == TokenUsage(
+        input_tokens=4,
+        cache_read_tokens=43542,
+        cache_write_tokens=13460,
+        output_tokens=117,
+        reasoning_tokens=0,
+    )
     assert result.warnings == ()
 
 

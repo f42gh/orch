@@ -17,10 +17,11 @@ from agent_orchestrator.engines.base import (
     Capabilities,
     EngineResult,
     RunSpec,
+    read_usage_int,
     read_version,
     which,
 )
-from agent_orchestrator.models import Engine, Task
+from agent_orchestrator.models import Engine, Task, TokenUsage
 from agent_orchestrator.router import AccessLevel, EnginePolicy, resolve_allowed_tools
 
 
@@ -104,15 +105,31 @@ class ClaudeAdapter:
 
         text = str(payload.get("result") or "")
         cost = payload.get("total_cost_usd")
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
         return EngineResult(
             text=text,
             exit_code=exit_code,
             session_id=payload.get("session_id"),
-            usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else None,
+            usage=usage,
             cost_usd=float(cost) if isinstance(cost, (int, float)) else None,
             warnings=tuple(warnings),
             structured=_maybe_json(text),
+            tokens=_normalise_tokens(usage),
         )
+
+
+def _normalise_tokens(usage: dict[str, Any] | None) -> TokenUsage | None:
+    if usage is None:
+        return None
+
+    # Claude excludes cache reads from input: the fixture reports only 4 input tokens
+    # alongside 43,542 cache-read tokens, so there is nothing to subtract.
+    return TokenUsage(
+        input_tokens=read_usage_int(usage, "input_tokens"),
+        cache_read_tokens=read_usage_int(usage, "cache_read_input_tokens"),
+        cache_write_tokens=read_usage_int(usage, "cache_creation_input_tokens"),
+        output_tokens=read_usage_int(usage, "output_tokens"),
+    )
 
 
 def _load_json_object(stdout: str) -> dict[str, Any] | None:

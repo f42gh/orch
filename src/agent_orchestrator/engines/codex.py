@@ -15,10 +15,11 @@ from agent_orchestrator.engines.base import (
     Capabilities,
     EngineResult,
     RunSpec,
+    read_usage_int,
     read_version,
     which,
 )
-from agent_orchestrator.models import Engine, Task
+from agent_orchestrator.models import Engine, Task, TokenUsage
 from agent_orchestrator.prompts import schema_for
 from agent_orchestrator.router import AccessLevel, EnginePolicy
 
@@ -128,6 +129,7 @@ class CodexAdapter:
             warnings.append("no agent message; falling back to stderr")
             text = stderr.strip()
 
+        tokens = _normalise_tokens(usage, warnings)
         return EngineResult(
             text=text,
             exit_code=exit_code,
@@ -136,6 +138,7 @@ class CodexAdapter:
             cost_usd=None,  # codex does not report cost
             warnings=tuple(warnings),
             structured=_maybe_json(text),
+            tokens=tokens,
         )
 
 
@@ -143,6 +146,31 @@ def _read_last_message(path: Path | None) -> str:
     if path is None or not path.exists():
         return ""
     return path.read_text(encoding="utf-8", errors="replace").strip()
+
+
+def _normalise_tokens(
+    usage: dict[str, Any] | None, warnings: list[str]
+) -> TokenUsage | None:
+    if usage is None:
+        return None
+
+    input_tokens = read_usage_int(usage, "input_tokens")
+    cache_read_tokens = read_usage_int(usage, "cached_input_tokens")
+    # ASSUMPTION: Codex follows the OpenAI Responses convention where input includes
+    # cached tokens. Treating them as separate would imply 54,967 input tokens for the
+    # one-line fixture prompt; no reported total is available to cross-check this.
+    if cache_read_tokens > input_tokens:
+        warnings.append(
+            "codex cached-input convention did not hold; input tokens clamped to zero"
+        )
+
+    return TokenUsage(
+        input_tokens=max(0, input_tokens - cache_read_tokens),
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=read_usage_int(usage, "cache_write_input_tokens"),
+        output_tokens=read_usage_int(usage, "output_tokens"),
+        reasoning_tokens=read_usage_int(usage, "reasoning_output_tokens"),
+    )
 
 
 def _maybe_json(text: str) -> dict[str, Any] | None:

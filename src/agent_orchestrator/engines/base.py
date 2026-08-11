@@ -123,3 +123,9 @@ def read_help(argv: list[str]) -> str:
     except (OSError, subprocess.SubprocessError):
         return ""
     return f"{completed.stdout or ''}\n{completed.stderr or ''}"
+
+
+def read_usage_int(usage: dict[str, Any], field_name: str) -> int:
+    """Read an integer usage field, treating missing or malformed values as zero."""
+    value = usage.get(field_name)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0

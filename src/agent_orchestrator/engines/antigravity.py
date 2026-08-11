@@ -25,10 +25,11 @@ from agent_orchestrator.engines.base import (
     EngineResult,
     RunSpec,
     read_help,
+    read_usage_int,
     read_version,
     which,
 )
-from agent_orchestrator.models import Engine, Task
+from agent_orchestrator.models import Engine, Task, TokenUsage
 from agent_orchestrator.router import AccessLevel, EnginePolicy
 
 
@@ -109,13 +110,16 @@ class AntigravityAdapter:
                 # agy exits 0 on CANCELED/INTERRUPTED too, so `status` is the only
                 # signal that the run did not really finish.
                 warnings.append(f"agy reported status {status}")
+            usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
+            tokens = _normalise_tokens(usage, warnings)
             return EngineResult(
                 text=str(payload.get("response") or payload.get("text") or text),
                 exit_code=exit_code,
                 session_id=payload.get("conversation_id"),
-                usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else None,
+                usage=usage,
                 warnings=tuple(warnings),
                 structured=payload,
+                tokens=tokens,
             )
 
         if not text:
@@ -130,6 +134,29 @@ class AntigravityAdapter:
             warnings.append("agy may have worked outside the workspace; check --add-dir")
 
         return EngineResult(text=text, exit_code=exit_code, warnings=tuple(warnings))
+
+
+def _normalise_tokens(
+    usage: dict[str, Any] | None, warnings: list[str]
+) -> TokenUsage | None:
+    if usage is None:
+        return None
+
+    input_tokens = read_usage_int(usage, "input_tokens")
+    cache_read_tokens = read_usage_int(usage, "cache_read_tokens")
+    # The fixture proves agy includes cache reads in input: 28,469 input + 204 output
+    # equals its reported total of 28,673, while 27,101 cache-read tokens are a subset.
+    if cache_read_tokens > input_tokens:
+        warnings.append(
+            "agy cached-input convention did not hold; input tokens clamped to zero"
+        )
+
+    return TokenUsage(
+        input_tokens=max(0, input_tokens - cache_read_tokens),
+        cache_read_tokens=cache_read_tokens,
+        output_tokens=read_usage_int(usage, "output_tokens"),
+        reasoning_tokens=read_usage_int(usage, "thinking_tokens"),
+    )
 
 
 def _maybe_json(text: str) -> dict[str, Any] | None:

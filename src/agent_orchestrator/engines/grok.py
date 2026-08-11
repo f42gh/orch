@@ -20,10 +20,11 @@ from agent_orchestrator.engines.base import (
     EngineResult,
     RunSpec,
     read_help,
+    read_usage_int,
     read_version,
     which,
 )
-from agent_orchestrator.models import Engine, Task
+from agent_orchestrator.models import Engine, Task, TokenUsage
 from agent_orchestrator.prompts import schema_for
 from agent_orchestrator.router import AccessLevel, EnginePolicy
 
@@ -108,7 +109,11 @@ class GrokAdapter:
             message = str(payload.get("message") or "grok reported an error")
             return EngineResult(text=message, exit_code=exit_code or 1, warnings=(message,))
 
-        cost = payload.get("total_cost_usd")
+        cost_ticks = payload.get("total_cost_usd_ticks")
+        if isinstance(cost_ticks, int) and not isinstance(cost_ticks, bool):
+            cost = cost_ticks / 10_000_000_000
+        else:
+            cost = payload.get("total_cost_usd")
         if payload.get("cost_is_partial"):
             # Summing modelUsage rows here would invent a total the server never
             # reported, so drop cost entirely and say why.
@@ -122,15 +127,32 @@ class GrokAdapter:
             warnings.append(f"stopped early: {stop_reason}")
 
         text = str(payload.get("text") or "")
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
         return EngineResult(
             text=text,
             exit_code=exit_code,
             session_id=payload.get("sessionId"),
-            usage=payload.get("usage") if isinstance(payload.get("usage"), dict) else None,
+            usage=usage,
             cost_usd=float(cost) if isinstance(cost, (int, float)) else None,
             warnings=tuple(warnings),
             structured=_maybe_json(text),
+            tokens=_normalise_tokens(usage),
         )
+
+
+def _normalise_tokens(usage: dict[str, Any] | None) -> TokenUsage | None:
+    if usage is None:
+        return None
+
+    # The fixture proves Grok excludes cache reads from input: 2,807 input + 24,960
+    # cache reads + 139 output is exactly its reported total of 27,906.
+    return TokenUsage(
+        input_tokens=read_usage_int(usage, "input_tokens"),
+        cache_read_tokens=read_usage_int(usage, "cache_read_input_tokens"),
+        cache_write_tokens=read_usage_int(usage, "cache_creation_input_tokens"),
+        output_tokens=read_usage_int(usage, "output_tokens"),
+        reasoning_tokens=read_usage_int(usage, "reasoning_tokens"),
+    )
 
 
 def _load_last_json_object(stdout: str) -> dict[str, Any] | None:

@@ -138,6 +138,39 @@ Notes:
   blocked rather than unable.
 - Fixture: `tests/fixtures/claude_result.json`
 
+## Token usage normalisation
+
+The native `usage` object remains attached to every result as the debugging record.
+Adapters also map it into `TokenUsage`, whose `input_tokens` means non-cached input:
+
+| `TokenUsage` field | codex | grok | claude | antigravity |
+|---|---|---|---|---|
+| `input_tokens` | `input_tokens - cached_input_tokens` | `input_tokens` | `input_tokens` | `input_tokens - cache_read_tokens` |
+| `cache_read_tokens` | `cached_input_tokens` | `cache_read_input_tokens` | `cache_read_input_tokens` | `cache_read_tokens` |
+| `cache_write_tokens` | `cache_write_input_tokens` | `cache_creation_input_tokens` | `cache_creation_input_tokens` | absent → 0 |
+| `output_tokens` | `output_tokens` | `output_tokens` | `output_tokens` | `output_tokens` |
+| `reasoning_tokens` | `reasoning_output_tokens` | `reasoning_tokens` | absent → 0 | `thinking_tokens` |
+
+The inclusion rules come from these recorded outputs:
+
+- Grok excludes cache reads from input. Its fixture has 2,807 input + 24,960 cache
+  reads + 139 output = 27,906, exactly the reported `total_tokens`. No subtraction.
+- Claude excludes cache reads from input. It reports only 4 `input_tokens` alongside
+  43,542 `cache_read_input_tokens`; those cannot be an included subset. No subtraction.
+- Antigravity includes cache reads in input. Its 28,469 input + 204 output = 28,673,
+  exactly the reported `total_tokens`, while its 27,101 cache reads are smaller than
+  input. Subtract the cache reads.
+- Codex inclusion is an **assumption**, not a measurement: it reports no total to
+  cross-check. The observed 29,879 input with 25,088 cached input follows the OpenAI
+  Responses convention where input includes cached tokens. Reading them as separate
+  would imply 54,967 input tokens for a one-line prompt. This must be re-verified
+  against a future run whose reported total can be cross-checked.
+
+Both subtractions are clamped at zero. A cached count larger than input invalidates the
+inclusion rule for that build, so the adapter preserves the result but raises a warning
+rather than silently emitting a negative or invented count. A run with no native usage
+object keeps `tokens=None`; an explicitly reported all-zero usage remains distinguishable.
+
 ## Consequences for the adapters
 
 - Every engine is spawned with `stdin=DEVNULL`. Required by codex, harmless elsewhere.
