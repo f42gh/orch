@@ -20,8 +20,10 @@ ui/pnpm-lock.yaml
 .claude/settings.local.json
 .idea/
 
-# Scratch notes that are not part of the documentation set
-docs/tmp
+# Local research notes and reference material. Kept out of the repository because it
+# includes third-party writing gathered while surveying prior art; docs/ is the
+# published documentation set.
+notes/
 
 # Environment
 .env
