@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, UTC
 from enum import StrEnum
 from pathlib import Path
+from types import NotImplementedType
 
 
 class Risk(StrEnum):
@@ -70,6 +71,43 @@ class FallbackMode(StrEnum):
 WRITING_KINDS = frozenset({TaskKind.IMPLEMENT, TaskKind.REFACTOR, TaskKind.TEST, TaskKind.UI_VERIFY})
 
 
+@dataclass(frozen=True, slots=True)
+class TokenUsage:
+    """Normalised token counts, with input_tokens excluding cached input.
+
+    Engines disagree about whether their input count includes cache reads, so adapters
+    convert their native usage into this non-cached input convention.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    reasoning_tokens: int = 0
+
+    @property
+    def total(self) -> int:
+        # Codex and Grok report reasoning as a subset of output, so adding it would
+        # double-count tokens already represented in output_tokens.
+        return (
+            self.input_tokens
+            + self.output_tokens
+            + self.cache_read_tokens
+            + self.cache_write_tokens
+        )
+
+    def __add__(self, other: object) -> TokenUsage | NotImplementedType:
+        if not isinstance(other, TokenUsage):
+            return NotImplemented
+        return TokenUsage(
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
+            reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
+        )
+
+
 @dataclass(slots=True)
 class Task:
     id: str
@@ -92,6 +130,13 @@ class Task:
     exit_code: int | None = None
     result_summary: str | None = None
     error: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    engine_ms: int | None = None
+    tokens: TokenUsage | None = None
+    files_changed: int | None = None
+    insertions: int | None = None
+    deletions: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

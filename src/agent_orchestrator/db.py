@@ -5,6 +5,7 @@ import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
@@ -18,6 +19,8 @@ from agent_orchestrator.models import (
     Task,
     TaskKind,
     TaskStatus,
+    TERMINAL_STATUSES,
+    TokenUsage,
     Workflow,
     WorkflowDetails,
     WorkflowRoute,
@@ -87,6 +90,17 @@ ADDED_COLUMNS: tuple[tuple[str, str], ...] = (
     ("base_ref", "TEXT"),
     ("cost_usd", "REAL"),
     ("exit_code", "INTEGER"),
+    ("started_at", "TEXT"),
+    ("finished_at", "TEXT"),
+    ("engine_ms", "INTEGER"),
+    ("tokens_input", "INTEGER"),
+    ("tokens_output", "INTEGER"),
+    ("tokens_cache_read", "INTEGER"),
+    ("tokens_cache_write", "INTEGER"),
+    ("tokens_reasoning", "INTEGER"),
+    ("files_changed", "INTEGER"),
+    ("insertions", "INTEGER"),
+    ("deletions", "INTEGER"),
 )
 
 #: Ordering used whenever the queue is drained. Cheaper than sorting in Python.
@@ -196,6 +210,12 @@ class TaskStore:
         self,
         status: TaskStatus | None = None,
         parent_id: str | None = None,
+        engine: Engine | None = None,
+        kind: TaskKind | None = None,
+        repo_path: Path | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        workflow_id: str | None = None,
     ) -> list[Task]:
         clauses: list[str] = []
         values: list[object] = []
@@ -205,10 +225,32 @@ class TaskStore:
         if parent_id is not None:
             clauses.append("parent_id = ?")
             values.append(parent_id)
+        if engine is not None:
+            clauses.append("engine = ?")
+            values.append(engine.value)
+        if kind is not None:
+            clauses.append("kind = ?")
+            values.append(kind.value)
+        if repo_path is not None:
+            clauses.append("tasks.repo_path = ?")
+            values.append(str(repo_path.expanduser().resolve()))
+        # utc_now_iso() and datetime.isoformat() produce sortable ISO 8601 strings,
+        # so SQLite can compare created_at and these bounds directly.
+        if since is not None:
+            clauses.append("created_at >= ?")
+            values.append(since.isoformat())
+        if until is not None:
+            clauses.append("created_at < ?")
+            values.append(until.isoformat())
+        join = ""
+        if workflow_id is not None:
+            join = " JOIN workflow_tasks ON workflow_tasks.task_id = tasks.id"
+            clauses.append("workflow_tasks.workflow_id = ?")
+            values.append(workflow_id)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         with self._conn() as conn:
             rows = conn.execute(
-                f"SELECT * FROM tasks{where} ORDER BY created_at ASC", values
+                f"SELECT tasks.* FROM tasks{join}{where} ORDER BY created_at ASC", values
             ).fetchall()
         return [row_to_task(row) for row in rows]
 
@@ -246,7 +288,12 @@ class TaskStore:
     def update_task(self, task_id: str, **fields: object) -> None:
         if not fields:
             return
-        fields["updated_at"] = utc_now_iso()
+        now = utc_now_iso()
+        # Every terminal-status write goes through update_task, so this single choke
+        # point also covers the daemon's failure paths and orch_cancel.
+        if fields.get("status") in TERMINAL_STATUSES and "finished_at" not in fields:
+            fields["finished_at"] = now
+        fields["updated_at"] = now
         assignments = ", ".join(f"{field} = ?" for field in fields)
         values = [normalize_value(value) for value in fields.values()]
         values.append(task_id)
@@ -664,14 +711,21 @@ def _next_workflow_id(
 
 
 def _claim(conn: sqlite3.Connection, task_id: str) -> str | None:
+    now = utc_now_iso()
     cursor = conn.execute(
-        "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
-        (TaskStatus.RUNNING.value, utc_now_iso(), task_id, TaskStatus.QUEUED.value),
+        """
+        UPDATE tasks
+        SET status = ?, updated_at = ?, started_at = COALESCE(started_at, ?)
+        WHERE id = ? AND status = ?
+        """,
+        (TaskStatus.RUNNING.value, now, now, task_id, TaskStatus.QUEUED.value),
     )
     return task_id if cursor.rowcount == 1 else None
 
 
 def normalize_value(value: object) -> object:
+    if isinstance(value, datetime):
+        return value.isoformat()
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, (Risk, Priority, TaskStatus, Engine, TaskKind)):
@@ -685,8 +739,30 @@ def row_to_task(row: sqlite3.Row) -> Task:
     def optional(name: str) -> object | None:
         return row[name] if name in keys else None
 
+    def optional_int(name: str) -> int | None:
+        value = optional(name)
+        return int(value) if value is not None else None
+
     engine = optional("engine")
     kind = optional("kind")
+    started_at = optional("started_at")
+    finished_at = optional("finished_at")
+    token_values = (
+        optional_int("tokens_input"),
+        optional_int("tokens_output"),
+        optional_int("tokens_cache_read"),
+        optional_int("tokens_cache_write"),
+        optional_int("tokens_reasoning"),
+    )
+    tokens = None
+    if any(value is not None for value in token_values):
+        tokens = TokenUsage(
+            input_tokens=token_values[0] or 0,
+            output_tokens=token_values[1] or 0,
+            cache_read_tokens=token_values[2] or 0,
+            cache_write_tokens=token_values[3] or 0,
+            reasoning_tokens=token_values[4] or 0,
+        )
     return Task(
         id=row["id"],
         repo_path=Path(row["repo_path"]),
@@ -708,6 +784,13 @@ def row_to_task(row: sqlite3.Row) -> Task:
         exit_code=optional("exit_code"),
         result_summary=row["result_summary"],
         error=row["error"],
+        started_at=parse_datetime(str(started_at)) if started_at is not None else None,
+        finished_at=parse_datetime(str(finished_at)) if finished_at is not None else None,
+        engine_ms=optional_int("engine_ms"),
+        tokens=tokens,
+        files_changed=optional_int("files_changed"),
+        insertions=optional_int("insertions"),
+        deletions=optional_int("deletions"),
     )
 
 

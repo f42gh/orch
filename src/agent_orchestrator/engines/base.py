@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from agent_orchestrator.models import Engine, Task
+from agent_orchestrator.models import Engine, Task, TokenUsage
 from agent_orchestrator.router import EnginePolicy
 
 
@@ -53,6 +53,7 @@ class EngineResult:
     warnings: tuple[str, ...] = ()
     #: Populated when the engine was asked for schema-constrained output.
     structured: dict[str, Any] | None = None
+    tokens: TokenUsage | None = None
 
     @property
     def ok(self) -> bool:
