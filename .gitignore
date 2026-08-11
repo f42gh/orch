@@ -18,6 +18,10 @@ ui/pnpm-lock.yaml
 
 # Local tool settings
 .claude/settings.local.json
+.idea/
+
+# Scratch notes that are not part of the documentation set
+docs/tmp
 
 # Environment
 .env
