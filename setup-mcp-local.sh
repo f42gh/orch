@@ -4,7 +4,7 @@ set -euo pipefail
 # setup-mcp-local.sh
 # - create .venv if missing
 # - install editable package with the [mcp] extra
-# - install the /orch command template into ~/.claude/commands/orch.md (via agentctl)
+# - install the /orch command template into ~/.claude/commands/orch.md (via orch)
 # - print the exact `claude mcp add` command to register this MCP server
 
 PYTHON=${PYTHON:-$(command -v python3 || command -v python || true)}
@@ -40,12 +40,12 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[mcp]"
 
 # Install the Claude command template into the default location
-if command -v agentctl >/dev/null 2>&1; then
-  echo "Installing /orch command template (locale: ja) via agentctl"
+if command -v orch >/dev/null 2>&1; then
+  echo "Installing /orch command template (locale: ja) via orch"
   # non-fatal: continue even if this fails
-  agentctl install-claude-command --locale ja || echo "agentctl install-claude-command failed (continue)"
+  orch install-claude-command --locale ja || echo "orch install-claude-command failed (continue)"
 else
-  echo "agentctl not found in PATH. The package should have installed it into .venv/bin. Ensure you run this script from the repo root and the venv activation succeeded." >&2
+  echo "orch not found in PATH. The package should have installed it into .venv/bin. Ensure you run this script from the repo root and the venv activation succeeded." >&2
 fi
 
 ABS_PY=$(pwd)/.venv/bin/python
@@ -59,7 +59,7 @@ Recommended command to register this MCP server with the Copilot/claude CLI:
 
 Alternative (if using the repo's "uv" runner):
 
-  claude mcp add orch -s user -- uv run --directory $(pwd) agentmcp
+  claude mcp add orch -s user -- orch mcp   # after: uv tool install -e ".[mcp,api]"
 
 To start the server locally for testing use:
 

@@ -586,15 +586,21 @@ def _kill_worker(config: Config, task_id: str) -> bool:
     return True
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(prog="agentmcp")
-    parser.add_argument("--runtime-root", default=None)
-    parser.add_argument("--routing", default=None)
-    args = parser.parse_args()
-
-    config = load_config(args.runtime_root, args.routing)
+def serve(runtime_root: str | None = None, routing: str | None = None) -> None:
+    """Serve MCP over stdio. Shared by `orch mcp` and `agentmcp`."""
+    config = load_config(runtime_root, routing)
     TaskStore(config)  # create the runtime tree and migrate before serving
     build_server(config).run("stdio")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="agentmcp", description="Deprecated alias for `orch mcp`."
+    )
+    parser.add_argument("--runtime-root", default=None, metavar="PATH")
+    parser.add_argument("--routing", default=None, metavar="PATH")
+    args = parser.parse_args()
+    serve(args.runtime_root, args.routing)
 
 
 if __name__ == "__main__":

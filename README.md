@@ -22,7 +22,7 @@ MCP サーバー経由で呼び出されるワーカーになる。Run・Batch�
 少なくとも1つのワーカー CLI が利用できれば処理を続けられる。各 CLI が実際に何をするかは、
 ドキュメントではなく実測に基づく[エンジン能力表](docs/engine-capabilities.md)に記録している。
 
-この表は固定割り当てではなくデフォルトである。対話式の `agentctl start`、単一タスクへの厳密な
+この表は固定割り当てではなくデフォルトである。対話式の `orch start`、単一タスクへの厳密な
 `--engine` 指定、または Run/Batch のルート表で自由に上書きできる。
 
 新しいワークフローでは、このデフォルトを明示的なルート表で上書きできる。実行を始める前に
@@ -48,9 +48,27 @@ Run が保存するのはルートとタスク履歴であり、あるタスク�
 ```bash
 git clone https://github.com/f42gh/orch
 cd orch
-uv sync
-uv run agentctl engines   # このマシンにあるエンジンとルーティングテーブルを表示
+uv sync                      # .venv/bin に orch を作る
+uv tool install -e ".[mcp,api]"   # PATH に通す（-e なので編集は即反映）
+orch engines                 # このマシンにあるエンジンとルーティングテーブルを表示
 ```
+
+`uv tool install` を省く場合は `uv run orch engines` のように毎回書くか、
+`.venv/bin` を PATH に入れる。
+
+コマンドは `orch` ひとつに集約されている:
+
+| | |
+|---|---|
+| `orch add` / `dispatch` / `list` / `show` | タスクの投入と確認 |
+| `orch run` / `batch` / `start` | Run・Batch ワークフロー |
+| `orch stats` / `usage` / `engines` | 集計と環境確認 |
+| `orch daemon run` | キューを消化するワーカー |
+| `orch api run` | ローカル HTTP API（UI 用） |
+| `orch mcp` | MCP サーバー（stdio） |
+
+旧名の `agentctl` / `agentd` / `agentapi` / `agentmcp` もエイリアスとして残っているため、
+既存の登録やスクリプトはそのまま動く。
 
 各 CLI のインストールと認証はそれぞれ個別に必要。このツールが認証情報を保存することはない。
 
@@ -59,8 +77,8 @@ uv run agentctl engines   # このマシンにあるエンジンとルーティ�
 MCP サーバーを登録し、リポジトリに含まれる `/orch` コマンドテンプレートをインストールする:
 
 ```bash
-claude mcp add orch -s user -- uv run --directory /absolute/path/to/orch agentmcp
-uv run agentctl install-claude-command --locale ja
+claude mcp add orch -s user -- orch mcp
+orch install-claude-command --locale ja
 ```
 
 `--locale ja` は、入力候補の説明と引数ヒントだけでなく、確認や最終報告も日本語化する。英語版を
@@ -89,7 +107,7 @@ uv run agentctl install-claude-command --locale ja
 今回の利用に合わせて対話形式で割り当てを選ぶには、次を実行する:
 
 ```bash
-uv run agentctl start
+orch start
 ```
 
 ウィザードはインストール済みエンジンを検出し、永続 Run と一回限りの Batch のどちらにするかを
@@ -100,15 +118,15 @@ Run を選んだ場合は空の Run を作成して `workflow_id` を表示す�
 後から作業を追加する場合は永続 Run を作る:
 
 ```bash
-uv run agentctl run create --repo ~/dev/my-project \
+orch run create --repo ~/dev/my-project \
   --route implement=grok \
   --fallback implement=codex,claude
 
 # create の出力にある workflow_id を使う。例: run-0007
-uv run agentctl run dispatch run-0007 --task "パーサーを追加して" --kind implement
-uv run agentctl run show run-0007
-uv run agentctl run list
-uv run agentctl run close run-0007
+orch run dispatch run-0007 --task "パーサーを追加して" --kind implement
+orch run show run-0007
+orch run list
+orch run close run-0007
 ```
 
 独立した全タスクが分かっている場合は、一回限りの Batch で投入する。tasks file はタスク仕様の
@@ -134,11 +152,11 @@ JSON 配列で、`--tasks-file -` を指定すると標準入力から読み込�
 エンジンはワークフロー側の `--route` で選び、Batch のタスクオブジェクトに `engine` は書けない。
 
 ```bash
-uv run agentctl batch dispatch --repo ~/dev/my-project \
+orch batch dispatch --repo ~/dev/my-project \
   --route implement=grok \
   --fallback implement=codex,claude \
   --tasks-file tasks.json
-uv run agentctl batch list
+orch batch list
 ```
 
 割り当てる kind ごとに `--route KIND=ENGINE` を繰り返す。省略した kind は、ワークフロー作成時の
@@ -163,18 +181,18 @@ uv run agentctl batch list
 元からある単一タスクコマンドも引き続き利用できる:
 
 ```bash
-uv run agentctl add --repo ~/dev/my-project --task "READMEのセットアップ手順を最新化して"
-uv run agentctl add --repo ~/dev/my-project --task "calc.py をレビューして" --kind review --risk read_only
-uv run agentctl dispatch --repo ~/dev/my-project --task "パーサーをレビューして" --kind review --engine codex
-uv run agentctl dispatch --repo ~/dev/my-project --task "..." --json  # add と開始を一発で。CAGE が呼ぶのはこれ
+orch add --repo ~/dev/my-project --task "READMEのセットアップ手順を最新化して"
+orch add --repo ~/dev/my-project --task "calc.py をレビューして" --kind review --risk read_only
+orch dispatch --repo ~/dev/my-project --task "パーサーをレビューして" --kind review --engine codex
+orch dispatch --repo ~/dev/my-project --task "..." --json  # add と開始を一発で。CAGE が呼ぶのはこれ
 
-uv run agentd run-task task-0001      # 1 件実行
-uv run agentd run --max-concurrency 2 # キューを消化
+orch daemon run-task task-0001      # 1 件実行
+orch daemon run --max-concurrency 2 # キューを消化
 
-uv run agentctl list
-uv run agentctl show task-0001
-uv run agentctl list --json           # orch_list と同じ形
-uv run agentctl show task-0001 --json
+orch list
+orch show task-0001
+orch list --json           # orch_list と同じ形
+orch show task-0001 --json
 ```
 
 `add` と `dispatch` のオプション: `--kind`、`--engine`、`--risk`、`--priority`、`--parent`、`--base-ref`。
@@ -184,20 +202,20 @@ uv run agentctl show task-0001 --json
 
 結果を返すコマンドはすべて `--json` を取る。人間向けの表は桁を揃えて出るので、機械で
 読むときは `--json` を使うこと。`--runtime-root` はサブコマンドの前後どちらにも書ける
-（両方書いた場合は後ろが勝つ）。使用例は `agentctl --help` の末尾にある。
+（両方書いた場合は後ろが勝つ）。使用例は `orch --help` の末尾にある。
 
 ## 実行コストの集計
 
 完了したタスクは必ず自分の実績値を記録する。エンジンが報告する場合はコスト、正規化された
-トークン数、エンジンの実行時間、動いたコード量。`agentctl stats` がそれを合計し、
+トークン数、エンジンの実行時間、動いたコード量。`orch stats` がそれを合計し、
 `orch_stats` が同じ数値を Claude に返す。
 
 ```bash
-uv run agentctl stats                          # このマシンの全実行
-uv run agentctl stats --workflow run-0001      # Run / Batch 単位
-uv run agentctl stats --group-by engine        # エンジン別の内訳
-uv run agentctl stats --since 2026-08-01 --repo ~/dev/my-project
-uv run agentctl stats --json                   # 1 行の JSON
+orch stats                          # このマシンの全実行
+orch stats --workflow run-0001      # Run / Batch 単位
+orch stats --group-by engine        # エンジン別の内訳
+orch stats --since 2026-08-01 --repo ~/dev/my-project
+orch stats --json                   # 1 行の JSON
 ```
 
 フィルタ: `--repo`、`--workflow`、`--engine`、`--kind`、`--since`、`--until`。
@@ -218,7 +236,7 @@ engine_s_p50: 285.5
 
 - **コスト合計は原理的に部分値**。コストを報告するのは grok と claude だけなので、
   数値は必ず「何件中何件が報告したか」と「どのエンジンが欠けているか」を伴って出る。
-  どのエンジンが報告するかは `agentctl engines` で確認できる。
+  どのエンジンが報告するかは `orch engines` で確認できる。
 - **`needs_review` が成功の終状態**。自分の成果物を自分で完了扱いにするものはいないので、
   正常に終わった実行はここで止まり、completed として数えられる。`succeeded` は手動で
   付けたときにしか入らない。
@@ -251,13 +269,13 @@ quota: codex 4.0% of a 7d window (plan=plus, resets 2026-08-18T00:47Z)
 
 ## エンジンごとの残量
 
-`stats` が「このデータベースのタスクが何を使ったか」なら、`agentctl usage` は
+`stats` が「このデータベースのタスクが何を使ったか」なら、`orch usage` は
 「各サブスクリプションがあとどれだけ残っているか」を答える。orch の外での消費も含む
 アカウント全体の値で、`orch_usage` が同じものを Claude に返す。
 
 ```bash
-uv run agentctl usage          # 4 エンジン分を一覧
-uv run agentctl usage --json   # 1 行の JSON
+orch usage          # 4 エンジン分を一覧
+orch usage --json   # 1 行の JSON
 ```
 
 ```
@@ -313,11 +331,11 @@ note: antigravity agy reports no quota: its JSON result carries tokens only, …
 
 HTTP API と React UI は、従来の単一タスクワークフロー用として引き続き利用できる。
 Run と Batch の作成・管理には対応しないため、新しいワークフローのオーケストレーションには
-MCP ツールまたは `agentctl` を使う。
+MCP ツールまたは `orch` を使う。
 
 ```bash
 uv sync --extra api
-uv run agentapi run            # 127.0.0.1:8765
+orch api run            # 127.0.0.1:8765
 cd ui && deno task dev
 ```
 

@@ -102,28 +102,46 @@ async def run_daemon(
             await asyncio.sleep(idle_sleep)
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agentd")
-    subparsers = parser.add_subparsers(dest="command", required=True)
+def add_arguments(parser: argparse.ArgumentParser) -> None:
+    """Populate a parser with the daemon's own commands.
 
-    run_parser = subparsers.add_parser("run", help="run daemon loop")
-    run_parser.add_argument("--runtime-root", default=None)
+    Mounted twice: as `orch daemon` and as the whole of `agentd`. Defined once so the
+    two cannot drift — an earlier `agentctl daemon` was a hand-copied second version of
+    this and had already lost track of DEFAULT_CONCURRENCY.
+    """
+    subparsers = parser.add_subparsers(dest="daemon_command", required=True)
+
+    run_parser = subparsers.add_parser("run", help="claim and run queued tasks until stopped")
+    run_parser.add_argument(
+        "--runtime-root", default=argparse.SUPPRESS, metavar="PATH",
+        help="override the runtime root",
+    )
     run_parser.add_argument("--once", action="store_true", help="process at most one queued task")
-    run_parser.add_argument("--idle-sleep", type=float, default=2.0)
-    run_parser.add_argument("--max-concurrency", type=int, default=DEFAULT_CONCURRENCY)
+    run_parser.add_argument(
+        "--idle-sleep", type=float, default=2.0, metavar="SECONDS",
+        help="how long to wait before looking for work again (default: 2.0)",
+    )
+    run_parser.add_argument(
+        "--max-concurrency", type=int, default=DEFAULT_CONCURRENCY, metavar="N",
+        help=f"how many tasks may run at once (default: {DEFAULT_CONCURRENCY})",
+    )
 
     task_parser = subparsers.add_parser("run-task", help="run one specific queued task")
-    task_parser.add_argument("task_id")
-    task_parser.add_argument("--runtime-root", default=None)
-    return parser
+    task_parser.add_argument("task_id", metavar="TASK_ID", help="the queued task to run")
+    # SUPPRESS, not None: mounted under `orch` these sit inside a parser that has
+    # already set runtime_root, and an argparse subparser default overwrites it.
+    task_parser.add_argument(
+        "--runtime-root", default=argparse.SUPPRESS, metavar="PATH",
+        help="override the runtime root",
+    )
 
 
-def main() -> None:
-    args = build_parser().parse_args()
-    config: Config = load_config(args.runtime_root)
+def run(args: argparse.Namespace) -> None:
+    """Execute a parsed daemon command. Shared by `orch daemon` and `agentd`."""
+    config: Config = load_config(getattr(args, "runtime_root", None))
     store = TaskStore(config)
 
-    if args.command == "run":
+    if args.daemon_command == "run":
         try:
             asyncio.run(
                 run_daemon(
@@ -139,9 +157,20 @@ def main() -> None:
             raise SystemExit(130) from None
         return
 
-    if args.command == "run-task":
-        status = asyncio.run(run_one_task(store, args.task_id))
-        print(f"{args.task_id}: {status.value}")
+    status = asyncio.run(run_one_task(store, args.task_id))
+    print(f"{args.task_id}: {status.value}")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="agentd", description="Deprecated alias for `orch daemon`."
+    )
+    add_arguments(parser)
+    return parser
+
+
+def main() -> None:
+    run(build_parser().parse_args())
 
 
 if __name__ == "__main__":

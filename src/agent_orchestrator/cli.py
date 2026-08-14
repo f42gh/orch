@@ -19,6 +19,8 @@ from agent_orchestrator.command_installer import (
 )
 from agent_orchestrator.config import Config, load_config
 from agent_orchestrator.db import TaskStore
+from agent_orchestrator.daemon import add_arguments as add_daemon_arguments
+from agent_orchestrator.daemon import run as run_daemon_command
 from agent_orchestrator.dispatch import DispatchError, dispatch_task, existing_repo
 from agent_orchestrator.engines import probe_all
 from agent_orchestrator.models import (
@@ -85,14 +87,14 @@ class Context:
 #: Shown under `agentctl --help`. The route syntax is the one thing a reader cannot
 #: guess from a metavar, and until now it only appeared in the README.
 EPILOG = """examples:
-  agentctl engines                        what this machine has, and how kinds route
-  agentctl usage                          how much of each subscription is left
-  agentctl add --repo ~/dev/app --task "update the README"
-  agentctl dispatch --repo ~/dev/app --task "review the parser" --kind review
-  agentctl run create --repo ~/dev/app --route implement=codex --fallback implement=claude,agy
-  agentctl run dispatch run-0001 --task "add the parser" --kind implement
-  agentctl batch dispatch --repo ~/dev/app --route review=grok --tasks-file tasks.json
-  agentctl stats --group-by engine --since 2026-08-01
+  orch engines                        what this machine has, and how kinds route
+  orch usage                          how much of each subscription is left
+  orch add --repo ~/dev/app --task "update the README"
+  orch dispatch --repo ~/dev/app --task "review the parser" --kind review
+  orch run create --repo ~/dev/app --route implement=codex --fallback implement=claude,agy
+  orch run dispatch run-0001 --task "add the parser" --kind implement
+  orch batch dispatch --repo ~/dev/app --route review=grok --tasks-file tasks.json
+  orch stats --group-by engine --since 2026-08-01
 
 A --route sets one kind's primary engine. A --fallback needs a matching --route and
 is strict: only those engines are tried, in that order. Omit it to snapshot the
@@ -195,13 +197,14 @@ def _runtime_root_parent() -> argparse.ArgumentParser:
 
 def build_parser() -> argparse.ArgumentParser:
     runtime_root = _runtime_root_parent()
+    # No prog=: the same parser is reached as `orch` and as the `agentctl` alias, and
+    # the usage line should name whichever the user actually typed.
     parser = argparse.ArgumentParser(
-        prog="agentctl",
         description="Hand coding work to another agent CLI and review what comes back.",
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--version", action="version", version=f"agentctl {__version__}")
+    parser.add_argument("--version", action="version", version=f"orch {__version__}")
     parser.add_argument(
         "--runtime-root",
         default=None,
@@ -341,6 +344,29 @@ def build_parser() -> argparse.ArgumentParser:
     add_batch("list", "list Batch workflows")
     batch_show = add_batch("show", "show one Batch and its tasks")
     batch_show.add_argument("batch_id", metavar="BATCH_ID", help="the Batch to describe")
+
+    daemon_parser = add("daemon", "run queued tasks (the worker loop)")
+    daemon_parser.set_defaults(func=_handle_daemon)
+    add_daemon_arguments(daemon_parser)
+
+    # `api` and `mcp` declare their flags here rather than importing them from the
+    # modules that implement them: those modules import fastapi and mcp at the top, and
+    # both are optional extras. Sharing the definitions would make `orch --help` fail on
+    # an install that only wanted the CLI. The handlers import lazily for the same reason.
+    api_parser = add("api", "serve the local HTTP API the React UI reads")
+    api_parser.set_defaults(func=_handle_api)
+    api_parser.add_argument(
+        "--host", default="127.0.0.1", metavar="ADDR", help="bind address (default: 127.0.0.1)"
+    )
+    api_parser.add_argument(
+        "--port", type=int, default=8765, metavar="PORT", help="bind port (default: 8765)"
+    )
+
+    mcp_parser = add("mcp", "serve the MCP control plane over stdio")
+    mcp_parser.set_defaults(func=_handle_mcp)
+    mcp_parser.add_argument(
+        "--routing", default=None, metavar="PATH", help="override the routing.toml path"
+    )
 
     install_parser = add(
         "install-claude-command", "install the bundled /orch command for Claude Code"
@@ -1190,6 +1216,23 @@ def _handle_show(args: argparse.Namespace, ctx: Context) -> None:
     print(f"diff_path: {log_path / 'diff.patch'}")
     if task.error:
         print(f"error: {task.error}")
+
+
+def _handle_daemon(args: argparse.Namespace, ctx: Context) -> None:
+    run_daemon_command(args)
+
+
+def _handle_api(args: argparse.Namespace, ctx: Context) -> None:
+    from agent_orchestrator import api
+
+    api.run(args)
+
+
+def _handle_mcp(args: argparse.Namespace, ctx: Context) -> None:
+    # Nothing may print to stdout past this point: it is the MCP transport.
+    from agent_orchestrator import mcp_server
+
+    mcp_server.serve(args.runtime_root, args.routing)
 
 
 def _handle_start(args: argparse.Namespace, ctx: Context) -> None:

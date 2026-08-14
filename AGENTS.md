@@ -41,22 +41,27 @@ server in `mcp_server.py`.
 ## Commands
 
 ```bash
-uv sync                       # install
-uv run pytest                 # tests
-uv run agentctl engines       # what this machine has, and the routing table
-uv run agentctl install-claude-command
-uv run agentctl run create --repo <path> --route implement=codex
-uv run agentctl run dispatch run-0001 --task "..." --kind implement
-uv run agentctl batch dispatch --repo <path> --route implement=codex --tasks-file tasks.json
-uv run agentctl add --repo <path> --task "..." --kind implement
-uv run agentctl stats --group-by engine        # cost, tokens, engine time, diff size
-uv run agentctl usage                          # each engine's account quota and its reset
-uv run agentctl dispatch --repo <path> --task "..." --json   # add + start; the JSON is CAGE's contract
-uv run agentd run-task <id>   # run one task
-uv run agentd run --max-concurrency 2
-uv run agentapi run           # local HTTP API on 127.0.0.1:8765
-uv run agentmcp               # MCP server over stdio
+uv sync                            # install; puts `orch` in .venv/bin
+uv run pytest                      # tests
+orch engines                       # what this machine has, and the routing table
+orch usage                         # each engine's account quota and its reset
+orch install-claude-command
+orch add --repo <path> --task "..." --kind implement
+orch dispatch --repo <path> --task "..." --json   # add + start; the JSON is CAGE's contract
+orch run create --repo <path> --route implement=codex
+orch run dispatch run-0001 --task "..." --kind implement
+orch batch dispatch --repo <path> --route implement=codex --tasks-file tasks.json
+orch stats --group-by engine       # cost, tokens, engine time, diff size
+orch daemon run-task <id>          # run one task
+orch daemon run --max-concurrency 2
+orch api run                       # local HTTP API on 127.0.0.1:8765
+orch mcp                           # MCP server over stdio
 ```
+
+`orch` is the whole surface. `agentctl`, `agentd`, `agentapi` and `agentmcp` remain as
+aliases: `agentctl` because CAGE builds the path `<checkout>/.venv/bin/agentctl` itself,
+`agentmcp` because existing `claude mcp add` registrations invoke it by name. Do not
+remove either. New code and new docs use `orch`.
 
 Run `uv run pytest` before submitting changes.
 
@@ -84,7 +89,8 @@ These are load-bearing. Changing one is a deliberate decision, not a refactor.
 - Nothing commits or pushes. Engines are told not to, deny rules block it, and
   `secrets_scan.py` looks for attempts afterwards.
 - Every engine is spawned with stdin closed and an explicit working directory.
-- `agentctl dispatch --json` and `agentctl engines --json` are frozen. CAGE
+- `dispatch --json` and `engines --json` are frozen, and so is the `agentctl` name
+  they are reached by. CAGE
   (`~/DEV/CAGE`) builds that argv and deserializes those payloads in
   `src-tauri/src/tools/orch/dispatch.rs`, into serde structs whose fields are required —
   `worker_pid` is `i64`, not `Option<i64>`. A renamed, dropped or null field is a

@@ -24,7 +24,7 @@ engine, so work can proceed as long as at least one worker CLI is available. The
 [engine capability notes](docs/engine-capabilities.md) record what each CLI actually
 does, measured rather than taken from its documentation.
 
-These are defaults, not fixed assignments. Use the interactive `agentctl start`, pass an
+These are defaults, not fixed assignments. Use the interactive `orch start`, pass an
 exact `--engine` for one task, or define a route table for a Run or Batch.
 
 For a new workflow you can replace those defaults with an explicit route table. Choose
@@ -51,9 +51,27 @@ worker CLI. Claude Code is required only for the MCP-driven workflow.
 ```bash
 git clone https://github.com/f42gh/orch
 cd orch
-uv sync
-uv run agentctl engines   # what this machine has, and the routing table
+uv sync                           # creates .venv/bin/orch
+uv tool install -e ".[mcp,api]"   # puts it on PATH; -e keeps it live against this checkout
+orch engines                      # what this machine has, and the routing table
 ```
+
+Skip `uv tool install` if you would rather write `uv run orch engines` each time, or put
+`.venv/bin` on your PATH yourself.
+
+Everything is under the one `orch` command:
+
+| | |
+|---|---|
+| `orch add` / `dispatch` / `list` / `show` | queue and inspect tasks |
+| `orch run` / `batch` / `start` | Run and Batch workflows |
+| `orch stats` / `usage` / `engines` | aggregates and what this machine has |
+| `orch daemon run` | the worker that drains the queue |
+| `orch api run` | local HTTP API for the UI |
+| `orch mcp` | MCP server over stdio |
+
+The older `agentctl`, `agentd`, `agentapi` and `agentmcp` names remain as aliases, so
+existing registrations and scripts keep working.
 
 Each CLI needs to be installed and authenticated on its own. Nothing here stores
 credentials.
@@ -63,8 +81,8 @@ credentials.
 Register the MCP server and install the repository's `/orch` command template:
 
 ```bash
-claude mcp add orch -s user -- uv run --directory /absolute/path/to/orch agentmcp
-uv run agentctl install-claude-command
+claude mcp add orch -s user -- orch mcp
+orch install-claude-command
 ```
 
 Pass `--locale ja` to install the Japanese command template instead. It localizes the
@@ -97,7 +115,7 @@ somewhere else. The supported template locales are `en` (default) and `ja`.
 For an interactive start where you choose the assignments for this use, run:
 
 ```bash
-uv run agentctl start
+orch start
 ```
 
 The wizard detects installed engines, asks whether this is a persistent Run or a
@@ -109,15 +127,15 @@ repeatable commands, use the explicit forms below.
 Create a persistent Run when you expect to add work later:
 
 ```bash
-uv run agentctl run create --repo ~/dev/my-project \
+orch run create --repo ~/dev/my-project \
   --route implement=grok \
   --fallback implement=codex,claude
 
 # Copy workflow_id from the create output, for example run-0007.
-uv run agentctl run dispatch run-0007 --task "add the parser" --kind implement
-uv run agentctl run show run-0007
-uv run agentctl run list
-uv run agentctl run close run-0007
+orch run dispatch run-0007 --task "add the parser" --kind implement
+orch run show run-0007
+orch run list
+orch run close run-0007
 ```
 
 Submit a one-shot Batch when every independent task is already known. The tasks file is
@@ -144,11 +162,11 @@ Choose engines at workflow level with `--route`; an `engine` key is not accepted
 Batch task object.
 
 ```bash
-uv run agentctl batch dispatch --repo ~/dev/my-project \
+orch batch dispatch --repo ~/dev/my-project \
   --route implement=grok \
   --fallback implement=codex,claude \
   --tasks-file tasks.json
-uv run agentctl batch list
+orch batch list
 ```
 
 Repeat `--route KIND=ENGINE` for the kinds you want to assign. Unmentioned kinds inherit
@@ -176,18 +194,18 @@ selected for each task.
 The original single-task commands remain supported:
 
 ```bash
-uv run agentctl add --repo ~/dev/my-project --task "READMEのセットアップ手順を最新化して"
-uv run agentctl add --repo ~/dev/my-project --task "calc.py をレビューして" --kind review --risk read_only
-uv run agentctl dispatch --repo ~/dev/my-project --task "review the parser" --kind review --engine codex
-uv run agentctl dispatch --repo ~/dev/my-project --task "..." --json  # add + start in one shot; what CAGE calls
+orch add --repo ~/dev/my-project --task "READMEのセットアップ手順を最新化して"
+orch add --repo ~/dev/my-project --task "calc.py をレビューして" --kind review --risk read_only
+orch dispatch --repo ~/dev/my-project --task "review the parser" --kind review --engine codex
+orch dispatch --repo ~/dev/my-project --task "..." --json  # add + start in one shot; what CAGE calls
 
-uv run agentd run-task task-0001      # run one
-uv run agentd run --max-concurrency 2 # drain the queue
+orch daemon run-task task-0001      # run one
+orch daemon run --max-concurrency 2 # drain the queue
 
-uv run agentctl list
-uv run agentctl show task-0001
-uv run agentctl list --json           # the same shape orch_list returns
-uv run agentctl show task-0001 --json
+orch list
+orch show task-0001
+orch list --json           # the same shape orch_list returns
+orch show task-0001 --json
 ```
 
 Options for `add` and `dispatch`: `--kind`, `--engine`, `--risk`, `--priority`, `--parent`, `--base-ref`.
@@ -198,20 +216,20 @@ dispatch fails early if that engine is not installed. Both commands check that
 Every command that returns a result takes `--json`. The human tables are printed
 with aligned columns, so read them with `--json` when a machine is reading.
 `--runtime-root` may go before or after the subcommand; the later one wins if you
-write both. `agentctl --help` ends with worked examples.
+write both. `orch --help` ends with worked examples.
 
 ## What a run cost
 
 Every finished task records what it spent: cost where the engine reports it, normalised
-token counts, the engine's wall time, and how much code moved. `agentctl stats` adds them
+token counts, the engine's wall time, and how much code moved. `orch stats` adds them
 up, and `orch_stats` returns the same figures to Claude.
 
 ```bash
-uv run agentctl stats                          # everything this machine has ever run
-uv run agentctl stats --workflow run-0001      # one Run or Batch
-uv run agentctl stats --group-by engine        # per-engine breakdown
-uv run agentctl stats --since 2026-08-01 --repo ~/dev/my-project
-uv run agentctl stats --json                   # one JSON object
+orch stats                          # everything this machine has ever run
+orch stats --workflow run-0001      # one Run or Batch
+orch stats --group-by engine        # per-engine breakdown
+orch stats --since 2026-08-01 --repo ~/dev/my-project
+orch stats --json                   # one JSON object
 ```
 
 Filters: `--repo`, `--workflow`, `--engine`, `--kind`, `--since`, `--until`. `--group-by`
@@ -232,7 +250,7 @@ Two things the numbers mean, both of which are easy to misread:
 
 - **The cost total is partial by construction.** Only grok and claude report cost, so the
   figure never appears without the fraction of tasks it covers and the engines missing
-  from it. `agentctl engines` shows which is which.
+  from it. `orch engines` shows which is which.
 - **`needs_review` is the successful outcome.** Nothing marks its own work as done, so a
   clean run stops there and counts as completed; `succeeded` is only ever set by hand.
 
@@ -267,13 +285,13 @@ consumption is what the token counts are for.
 
 ## What is left on each engine
 
-Where `stats` answers "what did the tasks in this database cost", `agentctl usage` answers
+Where `stats` answers "what did the tasks in this database cost", `orch usage` answers
 "how much of each subscription is left" — account-wide, including everything spent outside
 orch. `orch_usage` returns the same listing to Claude.
 
 ```bash
-uv run agentctl usage          # all four engines
-uv run agentctl usage --json   # one JSON object
+orch usage          # all four engines
+orch usage --json   # one JSON object
 ```
 
 ```
@@ -330,12 +348,12 @@ files, diffstat, token usage, cost where the engine reports it, and warnings.
 ## Legacy HTTP API and UI
 
 The HTTP API and React UI remain available for the original single-task workflow. They
-do not create or manage Runs and Batches; use the MCP tools or `agentctl` for new
+do not create or manage Runs and Batches; use the MCP tools or `orch` for new
 workflow orchestration.
 
 ```bash
 uv sync --extra api
-uv run agentapi run            # 127.0.0.1:8765
+orch api run            # 127.0.0.1:8765
 cd ui && deno task dev
 ```
 

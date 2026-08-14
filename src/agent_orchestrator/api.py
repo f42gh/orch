@@ -31,6 +31,11 @@ class CreateTaskRequest(BaseModel):
     base_ref: str | None = None
 
 
+#: Loopback only. This API has no authentication; it must not be reachable off-box.
+API_HOST = "127.0.0.1"
+API_PORT = 8765
+
+
 def serialize_task(config: Config, task: Task) -> dict[str, object]:
     log_path = config.logs_dir / task.id
     return {
@@ -168,20 +173,25 @@ def create_app(config: Config | None = None) -> FastAPI:
     return app
 
 
+def run(args: argparse.Namespace) -> None:
+    """Serve the local API. Shared by `orch api` and `agentapi`."""
+    import uvicorn
+
+    config = load_config(args.runtime_root)
+    uvicorn.run(create_app(config), host=args.host, port=args.port)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="agentapi")
+    parser = argparse.ArgumentParser(
+        prog="agentapi", description="Deprecated alias for `orch api`."
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
     run_parser = subparsers.add_parser("run", help="run local API server")
-    run_parser.add_argument("--host", default="127.0.0.1")
-    run_parser.add_argument("--port", type=int, default=8765)
-    run_parser.add_argument("--runtime-root", default=None)
+    run_parser.add_argument("--host", default=API_HOST, metavar="ADDR")
+    run_parser.add_argument("--port", type=int, default=API_PORT, metavar="PORT")
+    run_parser.add_argument("--runtime-root", default=None, metavar="PATH")
     return parser
 
 
 def main() -> None:
-    args = build_parser().parse_args()
-    if args.command == "run":
-        import uvicorn
-
-        config = load_config(args.runtime_root)
-        uvicorn.run(create_app(config), host=args.host, port=args.port)
+    run(build_parser().parse_args())

@@ -273,3 +273,58 @@ def test_install_claude_command_refuses_a_foreign_file_until_forced(
     assert "backup:" in out
     backup = next(path for path in tmp_path.iterdir() if path.name != "orch.md")
     assert backup.read_text(encoding="utf-8") == "# my own command\n"
+
+
+def test_orch_mounts_the_daemon_api_and_mcp_commands() -> None:
+    """One binary reaches all four services; the aliases stay for what depends on them."""
+    from agent_orchestrator.cli import build_parser
+
+    parser = build_parser()
+
+    daemon = parser.parse_args(["daemon", "run", "--max-concurrency", "3"])
+    assert daemon.daemon_command == "run"
+    assert daemon.max_concurrency == 3
+    assert parser.parse_args(["daemon", "run-task", "task-0001"]).task_id == "task-0001"
+    api = parser.parse_args(["api", "--port", "9000"])
+    assert api.port == 9000 and api.host == "127.0.0.1"
+    assert parser.parse_args(["mcp"]).routing is None
+
+
+def test_daemon_runtime_root_survives_the_umbrella_parser() -> None:
+    """A subparser default would overwrite what `orch --runtime-root` already set."""
+    from agent_orchestrator.cli import build_parser
+
+    parser = build_parser()
+
+    assert parser.parse_args(["--runtime-root", "/A", "daemon", "run"]).runtime_root == "/A"
+    assert parser.parse_args(["daemon", "run", "--runtime-root", "/B"]).runtime_root == "/B"
+    assert (
+        parser.parse_args(
+            ["--runtime-root", "/A", "daemon", "run-task", "t", "--runtime-root", "/B"]
+        ).runtime_root
+        == "/B"
+    )
+
+
+def test_agentd_is_the_same_parser_as_orch_daemon() -> None:
+    """`agentd` is an alias, not a second implementation — the earlier copy had drifted."""
+    from agent_orchestrator import daemon
+
+    standalone = daemon.build_parser().parse_args(["run", "--once"])
+
+    assert standalone.daemon_command == "run"
+    assert standalone.once is True
+    # No --runtime-root given anywhere, so `run` must cope with the attribute missing.
+    assert not hasattr(standalone, "runtime_root")
+
+
+def test_the_cli_imports_without_the_optional_extras(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`orch --help` must work on an install that took neither the api nor mcp extra."""
+    import sys
+
+    from agent_orchestrator.cli import build_parser
+
+    for module in ("fastapi", "uvicorn", "mcp", "mcp.server"):
+        monkeypatch.setitem(sys.modules, module, None)
+
+    assert build_parser().parse_args(["mcp"]).command == "mcp"

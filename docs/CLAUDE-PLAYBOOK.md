@@ -20,7 +20,7 @@ Dispatch returns in milliseconds. A real task takes minutes. Never sit in a poll
 has ended.
 
 Inspect every dispatch response before waiting. A non-null `spawn_error` means that task
-was saved but its detached worker did not start; it remains `queued` for `agentd` to
+was saved but its detached worker did not start; it remains `queued` for `orch daemon` to
 recover. Report it and do not include that ID in `orch_wait` until a daemon has started
 it, otherwise the wait can only time out.
 

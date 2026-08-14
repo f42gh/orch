@@ -2,7 +2,7 @@
 
 > **Legacy:** This Deno + React + Vite UI remains available for the original single-task
 > Agent Orchestrator API. It does not create or manage Runs and Batches. Use the MCP
-> tools or `agentctl` for new workflow orchestration.
+> tools or `orch` for new workflow orchestration.
 
 ## Requirements
 
@@ -15,7 +15,7 @@ From the repository root:
 
 ```bash
 uv sync --extra api
-uv run agentapi run
+orch api run
 ```
 
 In another terminal:
