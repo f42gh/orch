@@ -186,11 +186,19 @@ uv run agentd run --max-concurrency 2 # drain the queue
 
 uv run agentctl list
 uv run agentctl show task-0001
+uv run agentctl list --json           # the same shape orch_list returns
+uv run agentctl show task-0001 --json
 ```
 
 Options for `add` and `dispatch`: `--kind`, `--engine`, `--risk`, `--priority`, `--parent`, `--base-ref`.
 An explicit `--engine` wins over the kind's automatic route for that task; immediate
-dispatch fails early if that engine is not installed.
+dispatch fails early if that engine is not installed. Both commands check that
+`--repo` exists, and expand `~`.
+
+Every command that returns a result takes `--json`. The human tables are printed
+with aligned columns, so read them with `--json` when a machine is reading.
+`--runtime-root` may go before or after the subcommand; the later one wins if you
+write both. `agentctl --help` ends with worked examples.
 
 ## What a run cost
 

@@ -173,11 +173,18 @@ uv run agentd run --max-concurrency 2 # キューを消化
 
 uv run agentctl list
 uv run agentctl show task-0001
+uv run agentctl list --json           # orch_list と同じ形
+uv run agentctl show task-0001 --json
 ```
 
 `add` と `dispatch` のオプション: `--kind`、`--engine`、`--risk`、`--priority`、`--parent`、`--base-ref`。
 明示した `--engine` はそのタスクの kind による自動ルートより優先され、即時 dispatch では
-そのエンジンが未インストールならタスク作成前に失敗する。
+そのエンジンが未インストールならタスク作成前に失敗する。`--repo` はどちらのコマンドでも
+存在確認され、`~` は展開される。
+
+結果を返すコマンドはすべて `--json` を取る。人間向けの表は桁を揃えて出るので、機械で
+読むときは `--json` を使うこと。`--runtime-root` はサブコマンドの前後どちらにも書ける
+（両方書いた場合は後ろが勝つ）。使用例は `agentctl --help` の末尾にある。
 
 ## 実行コストの集計
 

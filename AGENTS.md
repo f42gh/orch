@@ -23,6 +23,13 @@ server in `mcp_server.py`.
   capture, timeouts, writing results back.
 - `src/agent_orchestrator/mcp_server.py` — the MCP control plane. Must never print to
   stdout; that is the transport.
+- `src/agent_orchestrator/cli.py` — argparse only: every subcommand is a
+  `set_defaults(func=...)` handler taking `(args, ctx)`. `ctx.store` is lazy, so a
+  command that answers without the database never creates one.
+- `src/agent_orchestrator/parsing.py` and `views.py` — the shared halves of the two
+  entry points: parsing turns caller strings into enums and requests, views builds the
+  JSON payloads. Both are used by `cli.py` and `mcp_server.py`; adding a rule or a
+  field to one of them reaches both. Do not reintroduce a local copy.
 - `src/agent_orchestrator/db.py` — SQLite, the single source of truth shared by the MCP
   server, the daemon, the CLI and the React UI.
 - `src/agent_orchestrator/stats.py` — pure aggregation over tasks: cost, tokens, engine
@@ -77,6 +84,15 @@ These are load-bearing. Changing one is a deliberate decision, not a refactor.
 - Nothing commits or pushes. Engines are told not to, deny rules block it, and
   `secrets_scan.py` looks for attempts afterwards.
 - Every engine is spawned with stdin closed and an explicit working directory.
+- `agentctl dispatch --json` and `agentctl engines --json` are frozen. CAGE
+  (`~/DEV/CAGE`) builds that argv and deserializes those payloads in
+  `src-tauri/src/tools/orch/dispatch.rs`, into serde structs whose fields are required —
+  `worker_pid` is `i64`, not `Option<i64>`. A renamed, dropped or null field is a
+  runtime parse failure there, which `src/tools/orch/dispatch.ts` treats as
+  `outcome-unknown` and uses to block that Inbox item from ever being re-dispatched. So
+  breaking these does not merely error, it wedges data in the other application. Change
+  them only alongside CAGE; `tests/test_cli_dispatch.py` pins both key sets. Every other
+  command's output is free to change.
 - Workflow routes choose the engine only. They must never change the access, prompt,
   schema, risk policy or dangerous-access opt-in derived for the task.
 - A manual workflow fallback list is strict and exhaustive. Automatic fallback is used
