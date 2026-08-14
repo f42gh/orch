@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 
+from agent_orchestrator import __version__
 from agent_orchestrator.command_installer import (
     SUPPORTED_COMMAND_LOCALES,
     CommandInstallError,
@@ -42,6 +44,7 @@ from agent_orchestrator.usage import UsageReport, collect_usage
 from agent_orchestrator.views import (
     dispatched_batch,
     dispatched_task,
+    task_detail,
     workflow_details,
     workflow_summary,
 )
@@ -78,9 +81,35 @@ class Context:
         return self._store
 
 
-def _add_task_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--repo", required=True)
-    parser.add_argument("--task", required=True)
+#: Shown under `agentctl --help`. The route syntax is the one thing a reader cannot
+#: guess from a metavar, and until now it only appeared in the README.
+EPILOG = """examples:
+  agentctl engines                        what this machine has, and how kinds route
+  agentctl usage                          how much of each subscription is left
+  agentctl add --repo ~/dev/app --task "update the README"
+  agentctl dispatch --repo ~/dev/app --task "review the parser" --kind review
+  agentctl run create --repo ~/dev/app --route implement=codex --fallback implement=claude,agy
+  agentctl run dispatch run-0001 --task "add the parser" --kind implement
+  agentctl batch dispatch --repo ~/dev/app --route review=grok --tasks-file tasks.json
+  agentctl stats --group-by engine --since 2026-08-01
+
+A --route sets one kind's primary engine. A --fallback needs a matching --route and
+is strict: only those engines are tried, in that order. Omit it to snapshot the
+automatic fallbacks instead."""
+
+#: `agy` is accepted everywhere `antigravity` is, and always serializes back as the
+#: long name. Listing both keeps `--help` honest about what the shell will accept.
+ENGINE_CHOICES = [*(engine.value for engine in Engine), "agy"]
+
+
+def _add_json_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--json", action="store_true", help="print the result as one JSON object"
+    )
+
+
+def _add_task_shape_arguments(parser: argparse.ArgumentParser) -> None:
+    """The task's own attributes, shared by every command that creates one."""
     parser.add_argument(
         "--kind",
         choices=[kind.value for kind in TaskKind],
@@ -88,16 +117,40 @@ def _add_task_arguments(parser: argparse.ArgumentParser) -> None:
         help="what the task is for; selects the engine unless --engine is given",
     )
     parser.add_argument(
-        "--engine",
-        default=None,
-        help="override the routed engine; accepts agy as an alias for antigravity",
+        "--risk",
+        choices=[risk.value for risk in Risk],
+        default=Risk.NORMAL.value,
+        help="how much the engine may touch; read_only forbids writes entirely",
     )
-    parser.add_argument("--risk", choices=[risk.value for risk in Risk], default=Risk.NORMAL.value)
     parser.add_argument(
-        "--priority", choices=[priority.value for priority in Priority], default=Priority.NORMAL.value
+        "--priority",
+        choices=[priority.value for priority in Priority],
+        default=Priority.NORMAL.value,
+        help="queue order for the daemon when several tasks are waiting",
     )
     parser.add_argument("--parent", default=None, help="group this task under another task id")
-    parser.add_argument("--base-ref", default=None, help="branch, tag or commit to branch from")
+    parser.add_argument(
+        "--base-ref",
+        default=None,
+        metavar="REF",
+        help="branch, tag or commit to branch the worktree from (default: current HEAD)",
+    )
+
+
+def _add_task_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--repo", required=True, metavar="PATH", help="the git checkout to work in"
+    )
+    parser.add_argument(
+        "--task", required=True, metavar="TEXT", help="what the engine should do"
+    )
+    parser.add_argument(
+        "--engine",
+        default=None,
+        choices=ENGINE_CHOICES,
+        help="override the routed engine; agy is an alias for antigravity",
+    )
+    _add_task_shape_arguments(parser)
 
 
 def _add_route_arguments(parser: argparse.ArgumentParser) -> None:
@@ -118,10 +171,6 @@ def _add_route_arguments(parser: argparse.ArgumentParser) -> None:
             "omit it to snapshot automatic fallbacks"
         ),
     )
-
-
-def _add_workflow_output_argument(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--json", action="store_true", help="print one JSON object")
 
 
 def _runtime_root_parent() -> argparse.ArgumentParser:
@@ -145,7 +194,13 @@ def _runtime_root_parent() -> argparse.ArgumentParser:
 
 def build_parser() -> argparse.ArgumentParser:
     runtime_root = _runtime_root_parent()
-    parser = argparse.ArgumentParser(prog="agentctl")
+    parser = argparse.ArgumentParser(
+        prog="agentctl",
+        description="Hand coding work to another agent CLI and review what comes back.",
+        epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--version", action="version", version=f"agentctl {__version__}")
     parser.add_argument(
         "--runtime-root",
         default=None,
@@ -155,112 +210,125 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    add_parser = subparsers.add_parser("add", parents=[runtime_root], help="add a task to the queue without starting it")
+    def add(name: str, help_text: str) -> argparse.ArgumentParser:
+        return subparsers.add_parser(name, parents=[runtime_root], help=help_text)
+
+    add_parser = add("add", "add a task to the queue without starting it")
     add_parser.set_defaults(func=_handle_add)
     _add_task_arguments(add_parser)
+    _add_json_argument(add_parser)
 
-    dispatch_parser = subparsers.add_parser(
-        "dispatch", parents=[runtime_root], help="add a task and start its detached worker immediately"
+    dispatch_parser = add(
+        "dispatch", "add a task and start its detached worker immediately"
     )
     dispatch_parser.set_defaults(func=_handle_dispatch)
     _add_task_arguments(dispatch_parser)
-    dispatch_parser.add_argument(
-        "--json", action="store_true", help="print the created task as one JSON line"
-    )
+    _add_json_argument(dispatch_parser)
 
-    list_parser = subparsers.add_parser("list", parents=[runtime_root], help="list tasks")
+    list_parser = add("list", "list tasks")
     list_parser.set_defaults(func=_handle_list)
+    _add_json_argument(list_parser)
 
-    stats_parser = subparsers.add_parser("stats", parents=[runtime_root], help="summarize task outcomes and usage")
+    stats_parser = add("stats", "summarize task outcomes and usage")
     stats_parser.set_defaults(func=_handle_stats)
-    stats_parser.add_argument("--json", action="store_true", help="print one JSON object")
-    stats_parser.add_argument("--repo", default=None)
-    stats_parser.add_argument("--workflow", dest="workflow_id", default=None)
+    _add_json_argument(stats_parser)
+    stats_parser.add_argument(
+        "--repo", default=None, metavar="PATH", help="only tasks for this checkout"
+    )
+    stats_parser.add_argument(
+        "--workflow",
+        dest="workflow_id",
+        default=None,
+        metavar="ID",
+        help="only tasks belonging to this Run or Batch",
+    )
     stats_parser.add_argument(
         "--engine",
         default=None,
-        help="filter by engine; accepts agy as an alias for antigravity",
+        choices=ENGINE_CHOICES,
+        help="only tasks that ran on this engine; agy is an alias for antigravity",
     )
-    stats_parser.add_argument("--kind", choices=[kind.value for kind in TaskKind], default=None)
-    stats_parser.add_argument("--since", metavar="ISO", default=None)
-    stats_parser.add_argument("--until", metavar="ISO", default=None)
+    stats_parser.add_argument(
+        "--kind",
+        choices=[kind.value for kind in TaskKind],
+        default=None,
+        help="only tasks of this kind",
+    )
+    stats_parser.add_argument(
+        "--since", metavar="ISO", default=None, help="only tasks created at or after this time"
+    )
+    stats_parser.add_argument(
+        "--until", metavar="ISO", default=None, help="only tasks created before this time"
+    )
     stats_parser.add_argument(
         "--group-by",
         choices=["engine", "kind", "model", "status", "repo"],
         default=None,
-    )
-    engines_parser = subparsers.add_parser(
-        "engines", parents=[runtime_root], help="show installed engines and the routing table"
-    )
-    engines_parser.set_defaults(func=_handle_engines)
-    engines_parser.add_argument(
-        "--json", action="store_true", help="print engines and routing as one JSON line"
+        help="also print a per-group breakdown table",
     )
 
-    usage_parser = subparsers.add_parser(
-        "usage", parents=[runtime_root],
-        help="show each engine's own account quota reading and when it resets",
+    engines_parser = add("engines", "show installed engines and the routing table")
+    engines_parser.set_defaults(func=_handle_engines)
+    _add_json_argument(engines_parser)
+
+    usage_parser = add(
+        "usage", "show each engine's own account quota reading and when it resets"
     )
     usage_parser.set_defaults(func=_handle_usage)
-    usage_parser.add_argument(
-        "--json", action="store_true", help="print one JSON object"
-    )
+    _add_json_argument(usage_parser)
 
-    show_parser = subparsers.add_parser("show", parents=[runtime_root], help="show task details")
+    show_parser = add("show", "show task details")
     show_parser.set_defaults(func=_handle_show)
-    show_parser.add_argument("task_id")
+    show_parser.add_argument("task_id", metavar="TASK_ID", help="the task to describe")
+    _add_json_argument(show_parser)
 
-    start_parser = subparsers.add_parser(
-        "start", parents=[runtime_root], help="interactively create a persistent Run or one-shot Batch"
-    )
+    start_parser = add("start", "interactively create a persistent Run or one-shot Batch")
     start_parser.set_defaults(func=_handle_start)
-    _add_workflow_output_argument(start_parser)
+    _add_json_argument(start_parser)
 
-    run_parser = subparsers.add_parser("run", parents=[runtime_root], help="manage persistent Run workflows")
+    run_parser = add("run", "manage persistent Run workflows")
     run_parser.set_defaults(func=_handle_run)
     run_subparsers = run_parser.add_subparsers(dest="run_command", required=True)
 
-    run_create = run_subparsers.add_parser("create", parents=[runtime_root], help="create an open Run")
-    run_create.add_argument("--repo", required=True)
+    def add_run(name: str, help_text: str) -> argparse.ArgumentParser:
+        sub = run_subparsers.add_parser(name, parents=[runtime_root], help=help_text)
+        _add_json_argument(sub)
+        return sub
+
+    run_create = add_run("create", "create an open Run")
+    run_create.add_argument(
+        "--repo", required=True, metavar="PATH", help="the git checkout this Run works in"
+    )
     _add_route_arguments(run_create)
-    _add_workflow_output_argument(run_create)
 
-    run_dispatch = run_subparsers.add_parser(
-        "dispatch", parents=[runtime_root], help="add and start one task under an open Run"
-    )
-    run_dispatch.add_argument("run_id", metavar="RUN_ID")
-    run_dispatch.add_argument("--task", required=True)
+    run_dispatch = add_run("dispatch", "add and start one task under an open Run")
+    run_dispatch.add_argument("run_id", metavar="RUN_ID", help="the open Run to add to")
     run_dispatch.add_argument(
-        "--kind", choices=[kind.value for kind in TaskKind], default=TaskKind.IMPLEMENT.value
+        "--task", required=True, metavar="TEXT", help="what the engine should do"
     )
-    run_dispatch.add_argument(
-        "--risk", choices=[risk.value for risk in Risk], default=Risk.NORMAL.value
-    )
-    run_dispatch.add_argument(
-        "--priority",
-        choices=[priority.value for priority in Priority],
-        default=Priority.NORMAL.value,
-    )
-    run_dispatch.add_argument("--parent", default=None)
-    run_dispatch.add_argument("--base-ref", default=None)
-    _add_workflow_output_argument(run_dispatch)
+    _add_task_shape_arguments(run_dispatch)
 
-    run_list = run_subparsers.add_parser("list", parents=[runtime_root], help="list Run workflows")
-    _add_workflow_output_argument(run_list)
-    run_show = run_subparsers.add_parser("show", parents=[runtime_root], help="show one Run and its tasks")
-    run_show.add_argument("run_id", metavar="RUN_ID")
-    _add_workflow_output_argument(run_show)
-    run_close = run_subparsers.add_parser("close", parents=[runtime_root], help="close a Run to further dispatch")
-    run_close.add_argument("run_id", metavar="RUN_ID")
-    _add_workflow_output_argument(run_close)
+    add_run("list", "list Run workflows")
+    run_show = add_run("show", "show one Run and its tasks")
+    run_show.add_argument("run_id", metavar="RUN_ID", help="the Run to describe")
+    run_close = add_run("close", "close a Run to further dispatch")
+    run_close.add_argument("run_id", metavar="RUN_ID", help="the Run to close")
 
-    batch_parser = subparsers.add_parser("batch", parents=[runtime_root], help="manage sealed Batch workflows")
+    batch_parser = add("batch", "manage sealed Batch workflows")
     batch_parser.set_defaults(func=_handle_batch)
     batch_subparsers = batch_parser.add_subparsers(dest="batch_command", required=True)
-    batch_dispatch = batch_subparsers.add_parser(
-        "dispatch", parents=[runtime_root], help="validate, persist, and start a complete independent task set"
+
+    def add_batch(name: str, help_text: str) -> argparse.ArgumentParser:
+        sub = batch_subparsers.add_parser(name, parents=[runtime_root], help=help_text)
+        _add_json_argument(sub)
+        return sub
+
+    batch_dispatch = add_batch(
+        "dispatch", "validate, persist, and start a complete independent task set"
     )
-    batch_dispatch.add_argument("--repo", required=True)
+    batch_dispatch.add_argument(
+        "--repo", required=True, metavar="PATH", help="the git checkout this Batch works in"
+    )
     _add_route_arguments(batch_dispatch)
     batch_dispatch.add_argument(
         "--tasks-file",
@@ -268,18 +336,21 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="JSON array of task objects; use - to read stdin",
     )
-    _add_workflow_output_argument(batch_dispatch)
-    batch_list = batch_subparsers.add_parser("list", parents=[runtime_root], help="list Batch workflows")
-    _add_workflow_output_argument(batch_list)
-    batch_show = batch_subparsers.add_parser("show", parents=[runtime_root], help="show one Batch and its tasks")
-    batch_show.add_argument("batch_id", metavar="BATCH_ID")
-    _add_workflow_output_argument(batch_show)
 
-    install_parser = subparsers.add_parser(
-        "install-claude-command", parents=[runtime_root], help="install the bundled /orch command for Claude Code"
+    add_batch("list", "list Batch workflows")
+    batch_show = add_batch("show", "show one Batch and its tasks")
+    batch_show.add_argument("batch_id", metavar="BATCH_ID", help="the Batch to describe")
+
+    install_parser = add(
+        "install-claude-command", "install the bundled /orch command for Claude Code"
     )
     install_parser.set_defaults(func=_handle_install)
-    install_parser.add_argument("--target", default=None, help="override ~/.claude/commands/orch.md")
+    install_parser.add_argument(
+        "--target",
+        default=None,
+        metavar="PATH",
+        help="override ~/.claude/commands/orch.md",
+    )
     install_parser.add_argument(
         "--locale",
         choices=SUPPORTED_COMMAND_LOCALES,
@@ -292,8 +363,44 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _print_json(payload: object) -> None:
-    print(json.dumps(payload, ensure_ascii=False))
+def _print_json(payload: object, *, stream: TextIO | None = None) -> None:
+    print(json.dumps(payload, ensure_ascii=False), file=stream or sys.stdout)
+
+
+def _display_width(text: str) -> int:
+    """Terminal columns, not code points.
+
+    Task descriptions here are often Japanese, and a CJK character occupies two
+    columns. Padding by `len()` leaves those rows visibly short.
+    """
+    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
+
+
+def _print_table(
+    headers: Sequence[str],
+    rows: Sequence[Sequence[str]],
+    *,
+    stream: TextIO | None = None,
+    indent: str = "",
+) -> None:
+    """Print aligned columns.
+
+    Every table used to be written out by hand at its call site, each with its own
+    header string and its own row f-string, which is why no two of them agreed on
+    alignment or on how to spell an absent value. Machine callers have `--json` now,
+    so the human output is free to be padded for reading.
+    """
+    out = stream or sys.stdout
+    widths = [_display_width(header) for header in headers]
+    for row in rows:
+        for index, cell in enumerate(row):
+            widths[index] = max(widths[index], _display_width(cell))
+    for line in (headers, *rows):
+        padded = [
+            cell + " " * (widths[index] - _display_width(cell))
+            for index, cell in enumerate(line)
+        ]
+        print((indent + "  ".join(padded)).rstrip(), file=out)
 
 
 def _format_cost(totals: Totals) -> str:
@@ -334,72 +441,103 @@ def _format_quota_reset(value: datetime | None) -> str:
     return aware.astimezone(UTC).strftime("%Y-%m-%dT%H:%MZ")
 
 
-def _print_stats(stats: Stats) -> None:
+def _print_stats(stats: Stats, *, stream: TextIO | None = None) -> None:
+    out = stream or sys.stdout
     totals = stats.totals
     statuses = ", ".join(
         f"{status}={count}" for status, count in totals.by_status.items()
     ) or "-"
-    print(f"tasks: {totals.tasks}")
-    print(f"by_status: {statuses}")
-    print(f"terminal: {totals.terminal}")
-    print(f"in_flight: {totals.in_flight}")
-    print(f"completed: {totals.completed}")
-    print(f"failed: {totals.failed}")
-    print(f"cancelled: {totals.cancelled}")
-    print(f"success_rate: {_format_rate(totals.success_rate)}")
-    print(f"cost_usd: {_format_cost(totals)}")
+    print(f"tasks: {totals.tasks}", file=out)
+    print(f"by_status: {statuses}", file=out)
+    print(f"terminal: {totals.terminal}", file=out)
+    print(f"in_flight: {totals.in_flight}", file=out)
+    print(f"completed: {totals.completed}", file=out)
+    print(f"failed: {totals.failed}", file=out)
+    print(f"cancelled: {totals.cancelled}", file=out)
+    print(f"success_rate: {_format_rate(totals.success_rate)}", file=out)
+    print(f"cost_usd: {_format_cost(totals)}", file=out)
     print(
         f"tokens: {totals.tokens.total} "
         f"({totals.tokens_reported_tasks}/{totals.tasks} tasks reported; "
         f"input={totals.tokens.input_tokens}, output={totals.tokens.output_tokens}, "
         f"cache_read={totals.tokens.cache_read_tokens}, "
         f"cache_write={totals.tokens.cache_write_tokens}, "
-        f"reasoning={totals.tokens.reasoning_tokens})"
+        f"reasoning={totals.tokens.reasoning_tokens})",
+        file=out,
     )
-    print(f"engine_s_total: {_format_ms_seconds(totals.engine_ms_total)}")
-    print(f"engine_s_p50: {_format_ms_seconds(totals.engine_ms_p50)}")
-    print(f"engine_s_p95: {_format_ms_seconds(totals.engine_ms_p95)}")
+    print(f"engine_s_total: {_format_ms_seconds(totals.engine_ms_total)}", file=out)
+    print(f"engine_s_p50: {_format_ms_seconds(totals.engine_ms_p50)}", file=out)
+    print(f"engine_s_p95: {_format_ms_seconds(totals.engine_ms_p95)}", file=out)
     queue_wait = (
         f"{totals.queue_wait_s_p50:.1f}"
         if totals.queue_wait_s_p50 is not None
         else "-"
     )
-    print(f"queue_wait_s_p50: {queue_wait}")
-    print(f"files_changed: {totals.files_changed}")
-    print(f"insertions: {totals.insertions}")
-    print(f"deletions: {totals.deletions}")
+    print(f"queue_wait_s_p50: {queue_wait}", file=out)
+    print(f"files_changed: {totals.files_changed}", file=out)
+    print(f"insertions: {totals.insertions}", file=out)
+    print(f"deletions: {totals.deletions}", file=out)
 
     for snapshot in stats.quota_snapshots.values():
         plan = snapshot.plan_type or "-"
         print(
             f"quota: {snapshot.engine.value} {snapshot.used_pct:.1f}% of a "
             f"{_format_window_minutes(snapshot.window_minutes)} window "
-            f"(plan={plan}, resets {_format_quota_reset(snapshot.resets_at)})"
+            f"(plan={plan}, resets {_format_quota_reset(snapshot.resets_at)})",
+            file=out,
         )
 
     if stats.group_by is None:
         return
-    print(
-        f"\n{stats.group_by}\ttasks\tterminal\tcompleted\tfailed\tcancelled\t"
-        "in_flight\tsuccess_rate\tcost_usd\ttokens\tengine_s_total\t"
-        "engine_s_p50\tengine_s_p95\tqueue_wait_s_p50\tfiles_changed\t"
-        "insertions\tdeletions"
+    print(file=out)
+    _print_table(
+        [
+            stats.group_by,
+            "tasks",
+            "terminal",
+            "completed",
+            "failed",
+            "cancelled",
+            "in_flight",
+            "success_rate",
+            "cost_usd",
+            "tokens",
+            "engine_s_total",
+            "engine_s_p50",
+            "engine_s_p95",
+            "queue_wait_s_p50",
+            "files_changed",
+            "insertions",
+            "deletions",
+        ],
+        [
+            [
+                key,
+                str(group.tasks),
+                str(group.terminal),
+                str(group.completed),
+                str(group.failed),
+                str(group.cancelled),
+                str(group.in_flight),
+                _format_rate(group.success_rate),
+                _format_cost(group),
+                str(group.tokens.total),
+                _format_ms_seconds(group.engine_ms_total),
+                _format_ms_seconds(group.engine_ms_p50),
+                _format_ms_seconds(group.engine_ms_p95),
+                (
+                    f"{group.queue_wait_s_p50:.1f}"
+                    if group.queue_wait_s_p50 is not None
+                    else "-"
+                ),
+                str(group.files_changed),
+                str(group.insertions),
+                str(group.deletions),
+            ]
+            for key, group in stats.groups.items()
+        ],
+        stream=out,
     )
-    for key, group in stats.groups.items():
-        group_queue_wait = (
-            f"{group.queue_wait_s_p50:.1f}"
-            if group.queue_wait_s_p50 is not None
-            else "-"
-        )
-        print(
-            f"{key}\t{group.tasks}\t{group.terminal}\t{group.completed}\t"
-            f"{group.failed}\t{group.cancelled}\t{group.in_flight}\t"
-            f"{_format_rate(group.success_rate)}\t{_format_cost(group)}\t"
-            f"{group.tokens.total}\t{_format_ms_seconds(group.engine_ms_total)}\t"
-            f"{_format_ms_seconds(group.engine_ms_p50)}\t"
-            f"{_format_ms_seconds(group.engine_ms_p95)}\t{group_queue_wait}\t"
-            f"{group.files_changed}\t{group.insertions}\t{group.deletions}"
-        )
 
 
 def _handle_stats(args: argparse.Namespace, ctx: Context) -> None:
@@ -457,9 +595,10 @@ def _format_age(age_seconds: float | None) -> str:
     return f"{_format_duration(timedelta(seconds=age_seconds))} ago"
 
 
-def _print_usage(report: UsageReport) -> None:
+def _print_usage(report: UsageReport, *, stream: TextIO | None = None) -> None:
+    out = stream or sys.stdout
     now = report.collected_at
-    print("engine\tinstalled\tplan\twindow\tused\tresets_at\tin\tobserved\tdetail")
+    rows: list[list[str]] = []
     for usage in report.engines:
         installed = "yes" if usage.installed else "no"
         plan = usage.plan or "-"
@@ -467,19 +606,30 @@ def _print_usage(report: UsageReport) -> None:
             usage.age(now).total_seconds() if usage.age(now) is not None else None
         )
         if not usage.windows:
-            print(f"{usage.engine.value}\t{installed}\t{plan}\t-\t-\t-\t-\t{age}\t-")
+            rows.append([usage.engine.value, installed, plan, "-", "-", "-", "-", age, "-"])
             continue
         for window in usage.windows:
             label = window.label
             if window.window_minutes is not None:
                 label = f"{label} ({_format_window_minutes(window.window_minutes)})"
-            used = f"{window.used_pct:.1f}%" if window.used_pct is not None else "-"
-            print(
-                f"{usage.engine.value}\t{installed}\t{plan}\t{label}\t{used}\t"
-                f"{_format_quota_reset(window.resets_at)}\t"
-                f"{_format_time_until(window.resets_at, now)}\t{age}\t"
-                f"{window.detail or '-'}"
+            rows.append(
+                [
+                    usage.engine.value,
+                    installed,
+                    plan,
+                    label,
+                    f"{window.used_pct:.1f}%" if window.used_pct is not None else "-",
+                    _format_quota_reset(window.resets_at),
+                    _format_time_until(window.resets_at, now),
+                    age,
+                    window.detail or "-",
+                ]
             )
+    _print_table(
+        ["engine", "installed", "plan", "window", "used", "resets_at", "in", "observed", "detail"],
+        rows,
+        stream=out,
+    )
 
     footer = [
         f"source: {usage.engine.value} {usage.source}"
@@ -499,15 +649,16 @@ def _print_usage(report: UsageReport) -> None:
         for note in usage.notes
     ]
     if footer:
-        print()
+        print(file=out)
         for line in footer:
-            print(line)
+            print(line, file=out)
 
 
-def _print_workflow(payload: Mapping[str, Any]) -> None:
-    print(f"{payload.get('type', 'workflow')} {payload.get('workflow_id', '?')}")
-    print(f"status: {payload.get('status', '-')}")
-    print(f"repo: {payload.get('repo', '-')}")
+def _print_workflow(payload: Mapping[str, Any], *, stream: TextIO | None = None) -> None:
+    out = stream or sys.stdout
+    print(f"{payload.get('type', 'workflow')} {payload.get('workflow_id', '?')}", file=out)
+    print(f"status: {payload.get('status', '-')}", file=out)
+    print(f"repo: {payload.get('repo', '-')}", file=out)
     totals = payload.get("totals")
     if isinstance(totals, Mapping):
         coverage = (
@@ -523,7 +674,8 @@ def _print_workflow(payload: Mapping[str, Any]) -> None:
             f"{totals.get('completed', 0)} completed; "
             f"{totals.get('failed', 0)} failed; "
             f"{totals.get('cancelled', 0)} cancelled; "
-            f"cost_usd {float(totals.get('cost_usd', 0.0)):.4f} ({coverage})"
+            f"cost_usd {float(totals.get('cost_usd', 0.0)):.4f} ({coverage})",
+            file=out,
         )
     for route in payload.get("routes") or []:
         kind = route["kind"]
@@ -531,35 +683,57 @@ def _print_workflow(payload: Mapping[str, Any]) -> None:
         fallbacks = route["fallbacks"]
         mode = route["fallback_mode"]
         chain = ",".join(fallbacks) if fallbacks else "-"
-        print(f"route {kind}: {primary} (fallback {mode}: {chain})")
+        print(f"route {kind}: {primary} (fallback {mode}: {chain})", file=out)
     tasks = payload.get("tasks") or []
-    print(f"tasks: {len(tasks)}")
-    for task in tasks:
-        line = (
-            f"  {task.get('task_id', '-')}\t{task.get('engine', '-')}\t"
-            f"{str(task.get('task', ''))[:50]}"
-        )
-        if task.get("spawn_error"):
-            line += f"\tspawn_error: {task['spawn_error']}"
-        print(line)
+    print(f"tasks: {len(tasks)}", file=out)
+    _print_table(
+        ["task_id", "engine", "task"],
+        [
+            [
+                str(task.get("task_id", "-")),
+                str(task.get("engine") or "-"),
+                str(task.get("task", ""))[:50]
+                + (
+                    f"  spawn_error: {task['spawn_error']}"
+                    if task.get("spawn_error")
+                    else ""
+                ),
+            ]
+            for task in tasks
+        ],
+        stream=out,
+        indent="  ",
+    )
 
 
-def _print_workflow_table(workflows: Sequence[Mapping[str, Any]]) -> None:
-    print("workflow_id\ttype\tstatus\trepo")
-    for workflow in workflows:
-        print(
-            f"{workflow.get('workflow_id', '-')}\t{workflow.get('type', '-')}\t"
-            f"{workflow.get('status', '-')}\t{workflow.get('repo', '-')}"
-        )
+def _print_workflow_table(
+    workflows: Sequence[Mapping[str, Any]], *, stream: TextIO | None = None
+) -> None:
+    _print_table(
+        ["workflow_id", "type", "status", "repo"],
+        [
+            [
+                str(workflow.get("workflow_id", "-")),
+                str(workflow.get("type", "-")),
+                str(workflow.get("status", "-")),
+                str(workflow.get("repo", "-")),
+            ]
+            for workflow in workflows
+        ],
+        stream=stream,
+    )
 
 
-def _print_workflow_dispatch(payload: Mapping[str, Any]) -> None:
-    print(f"dispatched {payload['task_id']}")
-    print(f"engine: {payload['engine']}")
-    print(f"branch: {payload['branch']}")
-    print(f"worker_pid: {payload['worker_pid']}")
+def _print_workflow_dispatch(
+    payload: Mapping[str, Any], *, stream: TextIO | None = None
+) -> None:
+    out = stream or sys.stdout
+    print(f"dispatched {payload['task_id']}", file=out)
+    print(f"engine: {payload['engine']}", file=out)
+    print(f"branch: {payload['branch']}", file=out)
+    print(f"worker_pid: {payload['worker_pid']}", file=out)
     if payload.get("spawn_error"):
-        print(f"spawn_error: {payload['spawn_error']}")
+        print(f"spawn_error: {payload['spawn_error']}", file=out)
 
 
 def _prompt(
@@ -753,14 +927,9 @@ def run_start_wizard(
     except (WorkflowError, ValueError) as exc:
         raise SystemExit(str(exc)) from None
     if as_json:
-        print(json.dumps(payload, ensure_ascii=False), file=out_stream)
+        _print_json(payload, stream=out_stream)
     else:
-        old_stdout = sys.stdout
-        try:
-            sys.stdout = out_stream  # type: ignore[assignment]
-            _print_workflow(payload)
-        finally:
-            sys.stdout = old_stdout
+        _print_workflow(payload, stream=out_stream)
     return payload
 
 
@@ -879,6 +1048,9 @@ def _handle_add(args: argparse.Namespace, ctx: Context) -> None:
         parent_id=args.parent,
         base_ref=args.base_ref,
     )
+    if args.json:
+        _print_json(task_detail(ctx.config, task))
+        return
     print(f"added {task.id}")
     print(f"status: {task.status.value}")
     print(f"kind: {task.kind.value}")
@@ -912,15 +1084,26 @@ def _handle_dispatch(args: argparse.Namespace, ctx: Context) -> None:
 
 
 def _handle_list(args: argparse.Namespace, ctx: Context) -> None:
-    print("task_id\tstatus\tkind\tengine\trisk\tpriority\tcost\tshort_task")
-    for task in ctx.store.list_tasks():
-        short = task.task.replace("\n", " ")[:50]
-        cost = f"{task.cost_usd:.4f}" if task.cost_usd is not None else "-"
-        print(
-            f"{task.id}\t{task.status.value}\t{task.kind.value}\t"
-            f"{task.engine.value if task.engine else '-'}\t{task.risk.value}\t"
-            f"{task.priority.value}\t{cost}\t{short}"
-        )
+    tasks = ctx.store.list_tasks()
+    if args.json:
+        _print_json({"tasks": [task_detail(ctx.config, task) for task in tasks]})
+        return
+    _print_table(
+        ["task_id", "status", "kind", "engine", "risk", "priority", "cost", "short_task"],
+        [
+            [
+                task.id,
+                task.status.value,
+                task.kind.value,
+                task.engine.value if task.engine else "-",
+                task.risk.value,
+                task.priority.value,
+                f"{task.cost_usd:.4f}" if task.cost_usd is not None else "-",
+                task.task.replace("\n", " ")[:50],
+            ]
+            for task in tasks
+        ],
+    )
 
 
 def _handle_engines(args: argparse.Namespace, ctx: Context) -> None:
@@ -940,16 +1123,31 @@ def _handle_engines(args: argparse.Namespace, ctx: Context) -> None:
             )
         )
         return
-    print("engine\tversion\tstructured\tcost")
-    for capabilities in probe_all(refresh=True).values():
-        print(
-            f"{capabilities.engine.value}\t{capabilities.version}\t"
-            f"{capabilities.structured_output}\t{capabilities.reports_cost}"
-        )
-    print("\nkind\tengine\tfallbacks\twrites")
-    for entry in table.describe():
-        fallbacks = ",".join(entry["fallbacks"]) or "-"  # type: ignore[arg-type]
-        print(f"{entry['kind']}\t{entry['engine']}\t{fallbacks}\t{entry['writes']}")
+    _print_table(
+        ["engine", "version", "structured", "cost"],
+        [
+            [
+                capabilities.engine.value,
+                str(capabilities.version),
+                str(capabilities.structured_output),
+                str(capabilities.reports_cost),
+            ]
+            for capabilities in probe_all(refresh=True).values()
+        ],
+    )
+    print()
+    _print_table(
+        ["kind", "engine", "fallbacks", "writes"],
+        [
+            [
+                str(entry["kind"]),
+                str(entry["engine"]),
+                ",".join(entry["fallbacks"]) or "-",  # type: ignore[arg-type]
+                str(entry["writes"]),
+            ]
+            for entry in table.describe()
+        ],
+    )
 
 
 def _handle_usage(args: argparse.Namespace, ctx: Context) -> None:
@@ -964,6 +1162,9 @@ def _handle_show(args: argparse.Namespace, ctx: Context) -> None:
     task = ctx.store.get_task(args.task_id)
     if task is None:
         raise SystemExit(f"task not found: {args.task_id}")
+    if args.json:
+        _print_json(task_detail(ctx.config, task))
+        return
     log_path = ctx.config.logs_dir / task.id
     print(f"task_id: {task.id}")
     print(f"task: {task.task}")

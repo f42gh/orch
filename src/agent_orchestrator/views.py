@@ -81,6 +81,8 @@ def task_detail(config: Config, task: Task) -> dict[str, Any]:
             else None
         ),
         "log_path": str(log_dir),
+        "diff_path": str(log_dir / "diff.patch"),
+        "result_summary": task.result_summary,
         "error": task.error,
     }
 

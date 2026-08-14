@@ -303,10 +303,15 @@ def test_usage_command_lists_every_engine_and_flags_the_stale_reading(
     main()
 
     lines = capsys.readouterr().out.splitlines()
-    assert lines[0].split("\t")[:4] == ["engine", "installed", "plan", "window"]
-    rows = {line.split("\t")[0] for line in lines[1:] if "\t" in line}
+    assert lines[0].split()[:4] == ["engine", "installed", "plan", "window"]
+    footer = ("source:", "stale:", "note:")
+    rows = {
+        line.split()[0]
+        for line in lines[1:]
+        if line and not line.startswith(footer)
+    }
     assert rows == {"codex", "claude", "grok", "antigravity"}
-    claude_row = next(line for line in lines if line.startswith("claude\t"))
+    claude_row = next(line for line in lines if line.startswith("claude "))
     # The reading is three days old and its window has turned over since.
     assert "elapsed" in claude_row
     assert any(line.startswith("stale: claude ") for line in lines)
