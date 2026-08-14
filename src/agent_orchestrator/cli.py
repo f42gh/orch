@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -18,7 +19,7 @@ from agent_orchestrator.command_installer import (
 )
 from agent_orchestrator.config import Config, load_config
 from agent_orchestrator.db import TaskStore
-from agent_orchestrator.dispatch import DispatchError, dispatch_task
+from agent_orchestrator.dispatch import DispatchError, dispatch_task, existing_repo
 from agent_orchestrator.engines import probe_all
 from agent_orchestrator.models import (
     Engine,
@@ -1036,10 +1037,11 @@ def _handle_install(args: argparse.Namespace, ctx: Context) -> None:
 def _handle_add(args: argparse.Namespace, ctx: Context) -> None:
     try:
         engine = parse_engine(args.engine)
-    except WorkflowError as exc:
+        repo_path = existing_repo(args.repo)
+    except (DispatchError, WorkflowError) as exc:
         raise SystemExit(str(exc)) from None
     task = ctx.store.add_task(
-        repo_path=Path(args.repo),
+        repo_path=repo_path,
         task=args.task,
         risk=Risk(args.risk),
         priority=Priority(args.priority),
@@ -1074,6 +1076,13 @@ def _handle_dispatch(args: argparse.Namespace, ctx: Context) -> None:
         )
     except (DispatchError, WorkflowError) as exc:
         raise SystemExit(str(exc)) from None
+    except OSError as exc:
+        # The row is already written by the time a spawn can fail, so say so: a caller
+        # who reads this as "nothing happened" and retries ends up with two tasks.
+        raise SystemExit(
+            f"could not start the worker: {exc}; the task is queued — find its id with "
+            "'agentctl list' and start it with 'agentd run-task <id>'"
+        ) from None
     if args.json:
         print(json.dumps(dispatched.describe(ctx.config), ensure_ascii=False))
     else:
@@ -1189,7 +1198,14 @@ def _handle_start(args: argparse.Namespace, ctx: Context) -> None:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
-    args.func(args, Context(load_config(args.runtime_root)))
+    try:
+        args.func(args, Context(load_config(args.runtime_root)))
+    except sqlite3.Error as exc:
+        # A locked or unreadable runtime database is an operator problem, not a bug to
+        # report as a traceback.
+        raise SystemExit(f"runtime database error: {exc}") from None
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
 
 
 if __name__ == "__main__":

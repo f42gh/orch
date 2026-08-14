@@ -131,6 +131,19 @@ def _package_root() -> str:
     return f"{root}{os.pathsep}{existing}" if existing else root
 
 
+def existing_repo(repo: str | Path) -> Path:
+    """The repo check every entry point that queues a task has to make.
+
+    `agentctl add` used to skip it and store `--repo` verbatim, so a typo or an
+    unexpanded `~` became a queued task that only failed later, in a detached worker,
+    where nobody was watching.
+    """
+    repo_path = Path(repo).expanduser()
+    if not repo_path.exists():
+        raise DispatchError(f"repo does not exist: {repo_path}")
+    return repo_path
+
+
 def dispatch_task(
     config: Config,
     store: TaskStore,
@@ -144,9 +157,7 @@ def dispatch_task(
     parent_id: str | None = None,
     base_ref: str | None = None,
 ) -> Dispatched:
-    repo_path = Path(repo).expanduser()
-    if not repo_path.exists():
-        raise DispatchError(f"repo does not exist: {repo_path}")
+    repo_path = existing_repo(repo)
 
     # Resolve the engine now rather than in the worker, so the caller learns
     # immediately when it asked for something this machine does not have.

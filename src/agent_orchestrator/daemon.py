@@ -124,14 +124,19 @@ def main() -> None:
     store = TaskStore(config)
 
     if args.command == "run":
-        asyncio.run(
-            run_daemon(
-                store,
-                once=args.once,
-                idle_sleep=args.idle_sleep,
-                max_concurrency=args.max_concurrency,
+        try:
+            asyncio.run(
+                run_daemon(
+                    store,
+                    once=args.once,
+                    idle_sleep=args.idle_sleep,
+                    max_concurrency=args.max_concurrency,
+                )
             )
-        )
+        except KeyboardInterrupt:
+            # Ctrl-C is how this loop is meant to end. Running tasks are detached
+            # workers and keep going; the daemon simply stops claiming new ones.
+            raise SystemExit(130) from None
         return
 
     if args.command == "run-task":

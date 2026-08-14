@@ -3,6 +3,19 @@
 Worker spawning is stubbed: these tests check that dispatch resolves the engine
 eagerly, writes the row, and prints what a machine caller needs — not that a real
 engine runs.
+
+`dispatch --json` and `engines --json` are the only two surfaces of this CLI that
+something outside this repository reads, and breaking them does not fail loudly here.
+CAGE (`~/DEV/CAGE`) deserializes both in `src-tauri/src/tools/orch/dispatch.rs` into
+serde structs whose fields are required — `worker_pid` is `i64`, not `Option<i64>`.
+A renamed, dropped or null field is a runtime parse failure there, which
+`src/tools/orch/dispatch.ts` classifies as `outcome-unknown`; that state deliberately
+blocks the Inbox item from ever being re-dispatched, to avoid submitting the same work
+twice. So a mismatch does not merely error, it wedges data in the other application.
+
+`test_dispatch_json_is_the_frozen_cage_contract` and
+`test_engines_json_is_the_frozen_cage_contract` pin the exact key sets. If you are
+changing them on purpose, change CAGE in the same breath.
 """
 
 from __future__ import annotations
@@ -77,6 +90,82 @@ def test_dispatch_json_prints_the_contract_and_starts_a_worker(
     assert stored is not None
     assert stored.status == TaskStatus.QUEUED
     assert stored.branch_name == "agent/codex/task-0001"
+
+
+def test_dispatch_json_is_the_frozen_cage_contract(
+    env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The exact key set CAGE's `OrchDispatched` requires. See this module's docstring."""
+    runtime, repo, _ = env
+
+    run_cli(
+        monkeypatch, runtime, "dispatch", "--repo", str(repo), "--task", "x", "--json"
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload) == {
+        "task_id",
+        "status",
+        "kind",
+        "engine",
+        "risk",
+        "repo",
+        "branch",
+        "parent_id",
+        "created_at",
+        "log_path",
+        "worker_pid",
+    }
+    # Every field but parent_id is non-optional on the other side.
+    assert all(payload[key] is not None for key in payload if key != "parent_id")
+    assert isinstance(payload["worker_pid"], int)
+
+
+def test_engines_json_is_the_frozen_cage_contract(
+    env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The exact key sets CAGE's `OrchEngines` requires. See this module's docstring."""
+    runtime, _, _ = env
+
+    run_cli(monkeypatch, runtime, "engines", "--json")
+
+    payload = json.loads(capsys.readouterr().out)
+    assert {"engines", "routing", "kinds"} <= set(payload)
+    assert {"engine", "version", "structured_output", "reports_cost"} <= set(
+        payload["engines"][0]
+    )
+    assert {"kind", "engine", "fallbacks", "writes"} <= set(payload["routing"][0])
+    assert all(isinstance(kind, str) for kind in payload["kinds"])
+
+
+def test_dispatch_reports_a_spawn_failure_without_a_traceback(
+    env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A queued row already exists when spawning fails, so the message has to say so."""
+    runtime, repo, _ = env
+    monkeypatch.setattr(
+        "agent_orchestrator.dispatch.spawn_worker",
+        lambda cfg, task_id: (_ for _ in ()).throw(OSError("Too many open files")),
+    )
+
+    with pytest.raises(SystemExit, match="the task is queued"):
+        run_cli(monkeypatch, runtime, "dispatch", "--repo", str(repo), "--task", "x")
+
+    assert [task.id for task in TaskStore(Config(runtime_root=runtime)).list_tasks()] == [
+        "task-0001"
+    ]
+
+
+def test_add_refuses_a_missing_repo_like_dispatch_does(
+    env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`add` used to queue whatever --repo said, failing much later in a worker."""
+    runtime, _, _ = env
+
+    with pytest.raises(SystemExit, match="repo does not exist"):
+        run_cli(monkeypatch, runtime, "add", "--repo", "/nope", "--task", "x")
+
+    assert TaskStore(Config(runtime_root=runtime)).list_tasks() == []
 
 
 def test_dispatch_without_json_stays_human_readable(
