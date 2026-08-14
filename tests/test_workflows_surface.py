@@ -611,3 +611,102 @@ def test_cli_install_command_wiring(tmp_path: Path, capsys: pytest.CaptureFixtur
     assert target.exists()
     assert "argument-hint: <依頼する作業>" in target.read_text(encoding="utf-8")
     assert f"installed Claude command: {target}" in capsys.readouterr().out
+
+
+def test_cli_batch_list_and_show_round_trip_through_main(
+    workflow_env,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, _, repo, _ = workflow_env
+    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+    tasks_path = repo.parent / "tasks.json"
+    tasks_path.write_text(json.dumps([{"task": "one"}, {"task": "two"}]), encoding="utf-8")
+    main(["batch", "dispatch", "--repo", str(repo), "--tasks-file", str(tasks_path), "--json"])
+    dispatched = json.loads(capsys.readouterr().out)
+
+    main(["batch", "list", "--json"])
+    listed = json.loads(capsys.readouterr().out)
+    assert [entry["workflow_id"] for entry in listed["workflows"]] == [
+        dispatched["workflow_id"]
+    ]
+
+    main(["batch", "show", dispatched["workflow_id"], "--json"])
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["task_ids"] == dispatched["task_ids"]
+    assert shown["type"] == "batch"
+
+
+def test_cli_run_and_batch_refuse_each_others_ids(
+    workflow_env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`run show batch-0001` must say what is wrong, not print a batch as a run."""
+    config, _, repo, _ = workflow_env
+    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+    main(["run", "create", "--repo", str(repo), "--json"])
+    run_id = json.loads(capsys.readouterr().out)["workflow_id"]
+    tasks_path = repo.parent / "tasks.json"
+    tasks_path.write_text(json.dumps([{"task": "one"}]), encoding="utf-8")
+    main(["batch", "dispatch", "--repo", str(repo), "--tasks-file", str(tasks_path), "--json"])
+    batch_id = json.loads(capsys.readouterr().out)["workflow_id"]
+
+    with pytest.raises(SystemExit, match="is a batch, not a run"):
+        main(["run", "show", batch_id])
+    with pytest.raises(SystemExit, match="is a run, not a batch"):
+        main(["batch", "show", run_id])
+
+
+def test_cli_workflow_human_output_goes_through_main(
+    workflow_env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The non-JSON paths were only ever tested by calling the printers directly."""
+    config, _, repo, _ = workflow_env
+    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+
+    main(["run", "create", "--repo", str(repo), "--route", "implement=codex"])
+    created = capsys.readouterr().out
+    assert created.startswith("run run-0001")
+    assert "route implement: codex" in created
+
+    main(["run", "dispatch", "run-0001", "--task", "add the parser"])
+    dispatched = capsys.readouterr().out
+    assert "dispatched task-0001" in dispatched
+    assert "engine: codex" in dispatched
+
+    main(["run", "list"])
+    listed = capsys.readouterr().out.splitlines()
+    assert listed[0].split() == ["workflow_id", "type", "status", "repo"]
+    assert listed[1].split()[:3] == ["run-0001", "run", "open"]
+
+    main(["run", "show", "run-0001"])
+    shown = capsys.readouterr().out
+    assert "tasks: 1" in shown
+    assert "add the parser" in shown
+
+    main(["run", "close", "run-0001"])
+    assert "status: closed" in capsys.readouterr().out
+
+
+def test_cli_stats_filters_narrow_the_task_set(
+    workflow_env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config, _, repo, _ = workflow_env
+    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+    main(["run", "create", "--repo", str(repo), "--json"])
+    run_id = json.loads(capsys.readouterr().out)["workflow_id"]
+    main(["run", "dispatch", run_id, "--task", "inside the run", "--json"])
+    capsys.readouterr()
+
+    main(["stats", "--workflow", run_id, "--json"])
+    assert json.loads(capsys.readouterr().out)["totals"]["tasks"] == 1
+    main(["stats", "--workflow", "run-9999", "--json"])
+    assert json.loads(capsys.readouterr().out)["totals"]["tasks"] == 0
+    main(["stats", "--repo", str(repo), "--json"])
+    assert json.loads(capsys.readouterr().out)["totals"]["tasks"] == 1
+    main(["stats", "--repo", str(repo.parent / "elsewhere"), "--json"])
+    assert json.loads(capsys.readouterr().out)["totals"]["tasks"] == 0
+    main(["stats", "--until", "2000-01-01", "--json"])
+    assert json.loads(capsys.readouterr().out)["totals"]["tasks"] == 0
+
+    with pytest.raises(SystemExit, match="invalid --until datetime"):
+        main(["stats", "--until", "not-a-date"])
