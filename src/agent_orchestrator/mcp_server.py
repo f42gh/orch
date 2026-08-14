@@ -37,14 +37,11 @@ from agent_orchestrator.engines import probe_all
 from agent_orchestrator.models import (
     TERMINAL_STATUSES,
     Engine,
-    FallbackMode,
     Priority,
     Risk,
     Task,
     TaskKind,
     TaskStatus,
-    Workflow,
-    WorkflowDetails,
     WorkflowRouteOverride,
     WorkflowTaskRequest,
     WorkflowType,
@@ -58,11 +55,16 @@ from agent_orchestrator.parsing import (
 )
 from agent_orchestrator.router import load_routing_table
 from agent_orchestrator.result import save_git_diff
-from agent_orchestrator.stats import build_stats, summarize
+from agent_orchestrator.stats import build_stats
 from agent_orchestrator.usage import collect_usage
+from agent_orchestrator.views import (
+    dispatched_batch,
+    dispatched_task,
+    task_detail,
+    workflow_details,
+    workflow_summary,
+)
 from agent_orchestrator.workflows import (
-    DispatchedBatch,
-    DispatchedWorkflowTask,
     WorkflowError,
     close_workflow,
     create_run,
@@ -115,116 +117,11 @@ def _workflow_task_request(value: object, *, where: str) -> WorkflowTaskRequest:
     return _workflow_call(task_request, value, where=where)
 
 
-def _workflow_summary(workflow: Workflow) -> dict[str, Any]:
-    return {
-        "workflow_id": workflow.id,
-        "type": workflow.workflow_type.value,
-        "status": workflow.status.value,
-        "repo": str(workflow.repo_path),
-        "created_at": workflow.created_at.isoformat(),
-        "closed_at": workflow.closed_at.isoformat() if workflow.closed_at else None,
-    }
-
-
-def _workflow_details(config: Config, details: WorkflowDetails) -> dict[str, Any]:
-    routes = [
-        {
-            "kind": route.kind.value,
-            "primary": route.primary.value,
-            "fallback_mode": route.fallback_mode.value,
-            "fallbacks": [engine.value for engine in route.fallbacks],
-        }
-        for route in details.routes
-    ]
-    tasks = []
-    for membership, task in zip(details.memberships, details.tasks, strict=True):
-        tasks.append({**_serialize(config, task), "ordinal": membership.ordinal})
-    return {
-        **_workflow_summary(details.workflow),
-        "routes": routes,
-        "task_ids": [task["task_id"] for task in tasks],
-        "tasks": tasks,
-        "totals": summarize(details.tasks).describe(),
-    }
-
-
-def _workflow_dispatch(config: Config, item: DispatchedWorkflowTask) -> dict[str, Any]:
-    return {
-        **item.dispatched.describe(config),
-        "workflow_id": item.workflow.id,
-        "ordinal": item.membership.ordinal,
-        "task": item.task.task,
-        "spawn_error": item.spawn_error,
-    }
-
-
-def _workflow_batch(
-    config: Config, store: TaskStore, result: DispatchedBatch
-) -> dict[str, Any]:
-    details = show_workflow(store, result.workflow.id)
-    tasks = [_workflow_dispatch(config, item) for item in result.dispatched]
-    return {
-        **_workflow_details(config, details),
-        "task_ids": [task["task_id"] for task in tasks],
-        "tasks": tasks,
-    }
-
-
 def _workflow_call[T](call: Any, *args: Any, **kwargs: Any) -> T:
     try:
         return call(*args, **kwargs)
     except (WorkflowError, ValueError) as exc:
         raise DispatchError(str(exc)) from None
-
-
-def _serialize(config: Config, task: Task) -> dict[str, Any]:
-    log_dir = config.logs_dir / task.id
-    tokens = task.tokens
-    return {
-        "task_id": task.id,
-        "status": task.status.value,
-        "kind": task.kind.value,
-        "engine": task.engine.value if task.engine else None,
-        "model": task.model,
-        "risk": task.risk.value,
-        "priority": task.priority.value,
-        "task": task.task,
-        "repo": str(task.repo_path),
-        "workspace": str(task.workspace_path) if task.workspace_path else None,
-        "branch": task.branch_name,
-        "parent_id": task.parent_id,
-        "base_ref": task.base_ref,
-        "cost_usd": task.cost_usd,
-        "exit_code": task.exit_code,
-        "created_at": task.created_at.isoformat(),
-        "updated_at": task.updated_at.isoformat(),
-        "started_at": task.started_at.isoformat() if task.started_at else None,
-        "finished_at": task.finished_at.isoformat() if task.finished_at else None,
-        "engine_ms": task.engine_ms,
-        "plan_type": task.plan_type,
-        "quota_used_pct": task.quota_used_pct,
-        "quota_window_minutes": task.quota_window_minutes,
-        "quota_resets_at": (
-            task.quota_resets_at.isoformat() if task.quota_resets_at else None
-        ),
-        "files_changed": task.files_changed,
-        "insertions": task.insertions,
-        "deletions": task.deletions,
-        "tokens": (
-            {
-                "input_tokens": tokens.input_tokens,
-                "output_tokens": tokens.output_tokens,
-                "cache_read_tokens": tokens.cache_read_tokens,
-                "cache_write_tokens": tokens.cache_write_tokens,
-                "reasoning_tokens": tokens.reasoning_tokens,
-                "total": tokens.total,
-            }
-            if tokens is not None
-            else None
-        ),
-        "log_path": str(log_dir),
-        "error": task.error,
-    }
 
 
 def _tail(path: Path, lines: int = LOG_TAIL_LINES) -> str:
@@ -319,7 +216,7 @@ def build_server(config: Config) -> MCPServer:
             base_ref=base_ref,
         )
         return {
-            **_serialize(config, dispatched.task),
+            **task_detail(config, dispatched.task),
             "branch": dispatched.branch,
             "engine": dispatched.engine.value,
             "worker_pid": dispatched.worker_pid,
@@ -352,7 +249,7 @@ def build_server(config: Config) -> MCPServer:
         else:
             elapsed_s = round((datetime.now(UTC) - task.started_at).total_seconds(), 1)
         return {
-            **_serialize(config, task),
+            **task_detail(config, task),
             "queue_wait_s": queue_wait_s,
             "elapsed_s": elapsed_s,
             "stdout_tail": _tail(log_dir / "stdout.log"),
@@ -379,7 +276,7 @@ def build_server(config: Config) -> MCPServer:
                     finished[task_id] = {"task_id": task_id, "status": "not_found"}
                     pending.discard(task_id)
                 elif task.status in TERMINAL_STATUSES:
-                    finished[task_id] = _serialize(config, task)
+                    finished[task_id] = task_detail(config, task)
                     pending.discard(task_id)
             if pending:
                 await asyncio.sleep(POLL_INTERVAL_S)
@@ -402,10 +299,10 @@ def build_server(config: Config) -> MCPServer:
         path = config.logs_dir / task_id / "result.json"
         if not path.exists():
             return {
-                **_serialize(config, task),
+                **task_detail(config, task),
                 "note": "no result yet; the task has not finished",
             }
-        return {**_serialize(config, task), "result": json.loads(path.read_text(encoding="utf-8"))}
+        return {**task_detail(config, task), "result": json.loads(path.read_text(encoding="utf-8"))}
 
     @server.tool(
         description=(
@@ -440,7 +337,7 @@ def build_server(config: Config) -> MCPServer:
         store = _store(config)
         parsed = _parse(TaskStatus, status) if status else None
         tasks = store.list_tasks(status=parsed, parent_id=parent_id)
-        return {"tasks": [_serialize(config, task) for task in tasks]}
+        return {"tasks": [task_detail(config, task) for task in tasks]}
 
     @server.tool(
         description=(
@@ -562,7 +459,7 @@ def build_server(config: Config) -> MCPServer:
         store = _store(config)
         overrides = _parse_workflow_routes(routes, fallbacks)
         details = _workflow_call(create_run, config, store, repo=repo, routes=overrides)
-        return _workflow_details(config, details)
+        return workflow_details(config, details)
 
     @server.tool(
         description=(
@@ -598,7 +495,7 @@ def build_server(config: Config) -> MCPServer:
             parent_id=parent_id,
             base_ref=base_ref,
         )
-        return _workflow_dispatch(config, dispatched)
+        return dispatched_task(config, dispatched)
 
     @server.tool(
         description=(
@@ -609,7 +506,7 @@ def build_server(config: Config) -> MCPServer:
     def orch_run_close(run_id: str) -> dict[str, Any]:
         store = _store(config)
         details = _workflow_call(close_workflow, store, run_id)
-        return _workflow_details(config, details)
+        return workflow_details(config, details)
 
     @server.tool(
         description=(
@@ -642,7 +539,7 @@ def build_server(config: Config) -> MCPServer:
             tasks=requests,
             routes=overrides,
         )
-        return _workflow_batch(config, store, batch)
+        return dispatched_batch(config, store, batch)
 
     @server.tool(
         description="List saved Run and Batch workflows; pass run or batch to filter."
@@ -650,7 +547,7 @@ def build_server(config: Config) -> MCPServer:
     def orch_workflow_list(workflow_type: str | None = None) -> dict[str, Any]:
         parsed = _parse(WorkflowType, workflow_type) if workflow_type else None
         workflows = _workflow_call(list_workflows, _store(config), parsed)
-        return {"workflows": [_workflow_summary(workflow) for workflow in workflows]}
+        return {"workflows": [workflow_summary(workflow) for workflow in workflows]}
 
     @server.tool(
         description=(
@@ -660,7 +557,7 @@ def build_server(config: Config) -> MCPServer:
     )
     def orch_workflow_show(workflow_id: str) -> dict[str, Any]:
         details = _workflow_call(show_workflow, _store(config), workflow_id)
-        return _workflow_details(config, details)
+        return workflow_details(config, details)
 
     return server
 

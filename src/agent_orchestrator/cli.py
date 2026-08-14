@@ -23,10 +23,7 @@ from agent_orchestrator.models import (
     FallbackMode,
     Priority,
     Risk,
-    Task,
     TaskKind,
-    Workflow,
-    WorkflowDetails,
     WorkflowRouteOverride,
     WorkflowTaskRequest,
     WorkflowType,
@@ -40,11 +37,15 @@ from agent_orchestrator.parsing import (
     route_overrides_from_flags,
 )
 from agent_orchestrator.router import load_routing_table
-from agent_orchestrator.stats import Stats, Totals, build_stats, summarize
+from agent_orchestrator.stats import Stats, Totals, build_stats
 from agent_orchestrator.usage import UsageReport, collect_usage
+from agent_orchestrator.views import (
+    dispatched_batch,
+    dispatched_task,
+    workflow_details,
+    workflow_summary,
+)
 from agent_orchestrator.workflows import (
-    DispatchedBatch,
-    DispatchedWorkflowTask,
     WorkflowError,
     close_workflow,
     create_run,
@@ -234,78 +235,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="back up and replace a different existing file"
     )
     return parser
-
-
-def _workflow_summary(workflow: Workflow) -> dict[str, Any]:
-    return {
-        "workflow_id": workflow.id,
-        "type": workflow.workflow_type.value,
-        "status": workflow.status.value,
-        "repo": str(workflow.repo_path),
-        "created_at": workflow.created_at.isoformat(),
-        "closed_at": workflow.closed_at.isoformat() if workflow.closed_at else None,
-    }
-
-
-def _task_summary(task: Task, *, ordinal: int) -> dict[str, Any]:
-    return {
-        "task_id": task.id,
-        "ordinal": ordinal,
-        "status": task.status.value,
-        "task": task.task,
-        "kind": task.kind.value,
-        "engine": task.engine.value if task.engine else None,
-        "risk": task.risk.value,
-        "priority": task.priority.value,
-        "parent_id": task.parent_id,
-        "base_ref": task.base_ref,
-        "branch": task.branch_name,
-    }
-
-
-def _workflow_details_payload(details: WorkflowDetails) -> dict[str, Any]:
-    routes = [
-        {
-            "kind": route.kind.value,
-            "primary": route.primary.value,
-            "fallback_mode": route.fallback_mode.value,
-            "fallbacks": [engine.value for engine in route.fallbacks],
-        }
-        for route in details.routes
-    ]
-    tasks = [
-        _task_summary(task, ordinal=membership.ordinal)
-        for membership, task in zip(details.memberships, details.tasks, strict=True)
-    ]
-    return {
-        **_workflow_summary(details.workflow),
-        "routes": routes,
-        "task_ids": [task["task_id"] for task in tasks],
-        "tasks": tasks,
-        "totals": summarize(details.tasks).describe(),
-    }
-
-
-def _dispatched_task_payload(config: Config, item: DispatchedWorkflowTask) -> dict[str, Any]:
-    return {
-        **item.dispatched.describe(config),
-        "workflow_id": item.workflow.id,
-        "ordinal": item.membership.ordinal,
-        "task": item.task.task,
-        "spawn_error": item.spawn_error,
-    }
-
-
-def _dispatched_batch_payload(
-    config: Config, store: TaskStore, batch: DispatchedBatch
-) -> dict[str, Any]:
-    details = show_workflow(store, batch.workflow.id)
-    tasks = [_dispatched_task_payload(config, item) for item in batch.dispatched]
-    return {
-        **_workflow_details_payload(details),
-        "task_ids": [task["task_id"] for task in tasks],
-        "tasks": tasks,
-    }
 
 
 def _print_json(payload: object) -> None:
@@ -755,12 +684,13 @@ def run_start_wizard(
             raise WorkflowError("workflow type must be run or batch")
         routes = _interactive_routes(config, stdin=in_stream, prompt_output=prompts)
         if workflow_type == WorkflowType.RUN.value:
-            payload = _workflow_details_payload(
+            payload = workflow_details(
+                config,
                 create_run(config, task_store, repo=repo, routes=routes)
             )
         else:
             tasks = _interactive_batch_tasks(stdin=in_stream, prompt_output=prompts)
-            payload = _dispatched_batch_payload(
+            payload = dispatched_batch(
                 config,
                 task_store,
                 dispatch_batch(config, task_store, repo=repo, tasks=tasks, routes=routes),
@@ -783,8 +713,8 @@ def _handle_run(config: Config, store: TaskStore, args: argparse.Namespace) -> N
     try:
         if args.run_command == "create":
             routes = route_overrides_from_flags(args.route, args.fallback)
-            payload = _workflow_details_payload(
-                create_run(config, store, repo=args.repo, routes=routes)
+            payload = workflow_details(
+                config, create_run(config, store, repo=args.repo, routes=routes)
             )
         elif args.run_command == "dispatch":
             dispatched = dispatch_run(
@@ -798,10 +728,10 @@ def _handle_run(config: Config, store: TaskStore, args: argparse.Namespace) -> N
                 parent_id=args.parent,
                 base_ref=args.base_ref,
             )
-            payload = _dispatched_task_payload(config, dispatched)
+            payload = dispatched_task(config, dispatched)
         elif args.run_command == "list":
             workflows = [
-                _workflow_summary(workflow)
+                workflow_summary(workflow)
                 for workflow in list_workflows(store, WorkflowType.RUN)
             ]
             if args.json:
@@ -813,10 +743,10 @@ def _handle_run(config: Config, store: TaskStore, args: argparse.Namespace) -> N
             details = show_workflow(store, args.run_id)
             if details.workflow_type is not WorkflowType.RUN:
                 raise WorkflowError(f"workflow {args.run_id} is a batch, not a run")
-            payload = _workflow_details_payload(details)
+            payload = workflow_details(config, details)
         else:
             details = close_workflow(store, args.run_id)
-            payload = _workflow_details_payload(details)
+            payload = workflow_details(config, details)
     except (WorkflowError, ValueError) as exc:
         raise SystemExit(str(exc)) from None
     if args.json:
@@ -832,14 +762,14 @@ def _handle_batch(config: Config, store: TaskStore, args: argparse.Namespace) ->
         if args.batch_command == "dispatch":
             routes = route_overrides_from_flags(args.route, args.fallback)
             requests = load_tasks_file(args.tasks_file)
-            payload = _dispatched_batch_payload(
+            payload = dispatched_batch(
                 config,
                 store,
                 dispatch_batch(config, store, repo=args.repo, tasks=requests, routes=routes),
             )
         elif args.batch_command == "list":
             workflows = [
-                _workflow_summary(workflow)
+                workflow_summary(workflow)
                 for workflow in list_workflows(store, WorkflowType.BATCH)
             ]
             if args.json:
@@ -851,7 +781,7 @@ def _handle_batch(config: Config, store: TaskStore, args: argparse.Namespace) ->
             details = show_workflow(store, args.batch_id)
             if details.workflow_type is not WorkflowType.BATCH:
                 raise WorkflowError(f"workflow {args.batch_id} is a run, not a batch")
-            payload = _workflow_details_payload(details)
+            payload = workflow_details(config, details)
     except (WorkflowError, ValueError) as exc:
         raise SystemExit(str(exc)) from None
     if args.json:
