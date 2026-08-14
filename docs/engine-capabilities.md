@@ -233,6 +233,50 @@ costs 0.03s.
 Reading this file lives in `session_logs.py`, not in `CodexAdapter`, because adapters are
 pure and must not touch the filesystem beyond the files they declare.
 
+## Account quota, per engine
+
+Three of the four engines leave a usage reading on disk. None of them can be *asked* for
+one: there is no `--usage` flag anywhere, so `usage.py` reads the files each engine
+already writes and never spawns a process — a quota listing that could itself spend
+quota, or touch an auth file, would be the wrong tool.
+
+| engine | file | what it says | refreshed when |
+|---|---|---|---|
+| codex | `$CODEX_HOME/sessions/**/rollout-*.jsonl` | `plan_type`, `primary`/`secondary` `used_percent` + `window_minutes` + `resets_at`, credit balance | every turn codex runs |
+| claude | `~/.claude.json` → `cachedUsageUtilization` | `fetchedAtMs`, `five_hour` / `seven_day` / codenamed windows with `utilization` + `resets_at`, `extra_usage` credits | while Claude Code runs, and on `/usage` |
+| grok | `~/.grok/logs/unified.jsonl` → `billing: fetched credits config` | `subscriptionTier`, `creditUsagePercent`, `currentPeriod.start`/`.end`, on-demand cap/used, prepaid balance | each time grok starts |
+| antigravity | — | nothing | — |
+
+Measured details that shape the reader:
+
+- **The newest rollout is not the newest-named file.** codex keeps writing to a resumed
+  session's rollout for days: on this machine the file named `…2026-08-12T14-10-19…` held
+  a reading timestamped `2026-08-14T12:37:05Z`, newer than every file named after the
+  13th. Selection is therefore by mtime, and the reading's own `timestamp` — not the
+  file's — is what gets reported as `observed_at`.
+- **Rollouts get large.** 317 files, 268 MB, the largest 20 MB. Only the last 512 KB of a
+  file is searched, and only the 10 newest files are opened, which keeps a listing at
+  ~0.3s; a tail that begins mid-record drops its first, partial line rather than decoding
+  a truncated number.
+- **claude's reading is a cache, and it is routinely days old.** It carries `fetchedAtMs`,
+  so its age is knowable — which matters because a window that has since reset makes the
+  cached percentage an overstatement, not an approximation. Only `organizationType`
+  (`claude_pro`) is read from the account block beside it; the identifiers there are not
+  this tool's business.
+- **claude names windows that state no length.** `five_hour` and `seven_day*` do;
+  `nimbus_quill` and friends do not, so they keep their name and report an unknown window
+  rather than being mapped to a guessed duration.
+- **grok reports a period, not a window length.** Both ends of `currentPeriod` are logged,
+  so the length is a subtraction rather than an assumption, and `end` is the reset.
+- **agy reports nothing.** Its JSON result carries `usage` tokens only; no quota appears
+  in `~/.antigravity`, `~/.cache/antigravity`, `~/Library/Application Support/Antigravity`
+  (including `globalStorage/state.vscdb`), or `~/Library/Logs/Antigravity`. It is listed
+  with that as its reason, because an engine that cannot report and an engine that was
+  skipped look identical in a table of found readings.
+
+This is account-wide usage. The per-task quota snapshot in `stats` is the same codex
+reading captured at the end of one task; neither is ever summed.
+
 ## Consequences for the adapters
 
 - Every engine is spawned with `stdin=DEVNULL`. Required by codex, harmless elsewhere.

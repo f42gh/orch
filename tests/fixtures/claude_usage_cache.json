@@ -1,0 +1,59 @@
+{
+  "oauthAccount": {
+    "organizationType": "claude_pro",
+    "organizationRole": "admin"
+  },
+  "cachedUsageUtilization": {
+    "fetchedAtMs": 1786454490097,
+    "utilization": {
+      "five_hour": {
+        "utilization": 1,
+        "resets_at": "2026-08-11T17:40:00.032701+00:00",
+        "limit_dollars": null,
+        "used_dollars": null,
+        "remaining_dollars": null
+      },
+      "seven_day": {
+        "utilization": 57,
+        "resets_at": "2026-08-11T23:00:00.032726+00:00",
+        "limit_dollars": null,
+        "used_dollars": null,
+        "remaining_dollars": null
+      },
+      "seven_day_opus": null,
+      "nimbus_quill": {
+        "utilization": 0,
+        "resets_at": null,
+        "limit_dollars": null,
+        "used_dollars": null,
+        "remaining_dollars": null
+      },
+      "extra_usage": {
+        "is_enabled": false,
+        "monthly_limit": 10000,
+        "used_credits": 8593,
+        "utilization": 85.93,
+        "currency": "USD",
+        "decimal_places": 2,
+        "disabled_reason": "out_of_credits",
+        "user_disabled": false,
+        "spend_limit_reached": false,
+        "credits_ever_enabled": true,
+        "daily": null,
+        "weekly": null
+      },
+      "limits": [
+        {
+          "kind": "session",
+          "group": "session",
+          "percent": 1,
+          "severity": "normal",
+          "resets_at": "2026-08-11T17:40:00.032701+00:00",
+          "scope": null,
+          "is_active": false
+        }
+      ],
+      "member_dashboard_available": false
+    }
+  }
+}

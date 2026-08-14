@@ -43,6 +43,7 @@ uv run agentctl run dispatch run-0001 --task "..." --kind implement
 uv run agentctl batch dispatch --repo <path> --route implement=codex --tasks-file tasks.json
 uv run agentctl add --repo <path> --task "..." --kind implement
 uv run agentctl stats --group-by engine        # cost, tokens, engine time, diff size
+uv run agentctl usage                          # each engine's account quota and its reset
 uv run agentctl dispatch --repo <path> --task "..." --json   # add + start; the JSON is CAGE's contract
 uv run agentd run-task <id>   # run one task
 uv run agentd run --max-concurrency 2

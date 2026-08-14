@@ -252,6 +252,7 @@ def test_mcp_registers_orch_stats(workflow_env) -> None:
     names = set(build_server(config)._tool_manager._tools)  # noqa: SLF001
 
     assert "orch_stats" in names
+    assert "orch_usage" in names
 
 
 def test_cli_stats_json_is_parseable_and_accepts_agy_alias(

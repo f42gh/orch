@@ -76,7 +76,7 @@ uv run agentctl install-claude-command --locale ja
 `orch_batch_dispatch`、再開・確認用の `orch_workflow_list`・`orch_workflow_show`。
 個々のタスクは `orch_status`・`orch_wait`・`orch_result`・`orch_diff` で追跡し、成果物は
 `orch_adopt` で worktree から取り出す。`orch_stats` は下記の集計（コスト、トークン、実行時間、
-クォータ）をそのまま返す。ファンアウトや、あるエンジンに実装させて別のエンジンにレビューさせる
+クォータ）をそのまま返し、`orch_usage` は各エンジンのアカウント残量と復活時刻を返す。ファンアウトや、あるエンジンに実装させて別のエンジンにレビューさせる
 パターンは [Claude Code playbook](docs/CLAUDE-PLAYBOOK.md)を参照。
 
 デフォルトのインストール先は `~/.claude/commands/orch.md`。内容が同一なら何も変更しない。
@@ -241,6 +241,49 @@ quota: codex 4.0% of a 7d window (plan=plus, resets 2026-08-18T00:47Z)
 これは**アカウントのスナップショットであってタスク単位のコストではなく、合計もしない**。
 `used_percent` はアカウント全体の値で整数に量子化されているため、同時に走った 2 本を
 区別できず、短いタスクではそもそも動かない。タスク単位の消費量はトークン数で見る。
+
+## エンジンごとの残量
+
+`stats` が「このデータベースのタスクが何を使ったか」なら、`agentctl usage` は
+「各サブスクリプションがあとどれだけ残っているか」を答える。orch の外での消費も含む
+アカウント全体の値で、`orch_usage` が同じものを Claude に返す。
+
+```bash
+uv run agentctl usage          # 4 エンジン分を一覧
+uv run agentctl usage --json   # 1 行の JSON
+```
+
+```
+engine       installed  plan        window          used   resets_at          in      observed  detail
+codex        yes        plus        primary (7d)    8.0%   2026-08-20T12:38Z  5d23h   53m ago   -
+claude       yes        claude_pro  five_hour (5h)  1.0%   2026-08-11T17:40Z  elapsed 3d0h ago  -
+claude       yes        claude_pro  seven_day (7d)  57.0%  2026-08-11T23:00Z  elapsed 3d0h ago  -
+claude       yes        claude_pro  extra_usage     85.9%  -                  -       3d0h ago  8593/10000 credits, disabled (out_of_credits)
+grok         yes        SuperGrok   credits (7d)    3.0%   2026-08-12T21:13Z  elapsed 2d16h ago -
+antigravity  yes        -           -               -      -                  -       -         -
+
+source: codex /Users/f42/.codex/sessions/2026/08/12/rollout-…jsonl
+stale: claude a window reset after this reading, so real usage is lower than shown — …
+note: antigravity agy reports no quota: its JSON result carries tokens only, …
+```
+
+どのエンジンにも残量を訊く API はない。取れるのは**各エンジンが自分で書いたファイル**
+だけなので、`usage` はそれを読むだけでプロセスを起動しないし、認証ファイルにも触らない
+（残量を見るコマンドが残量を消費しては本末転倒だし、トークンを読む理由もない）。
+エンジンごとの取得元と実測の詳細は `docs/engine-capabilities.md` にある。
+
+そのため、数字より重要なのが**いつ測られた値か**で、各行は必ず `observed`（測定時刻からの
+経過）と取得元ファイルを伴って出る:
+
+- **codex** は毎ターン記録するので、ほぼ常に新しい。
+- **claude** は `/usage` のキャッシュで、Claude Code が動いている間しか更新されない。
+  数日前の値であることが普通にある。
+- **grok** は起動時に 1 回書く。
+- **antigravity** は何も報告しない。省略せず「報告できない」と理由付きで並べる —
+  一覧に出ないエンジンは、未インストールなのか報告できないのか区別がつかないため。
+
+`in` が `elapsed` の行は、**その窓が測定後にリセット済み**という意味で、表示されている
+消費率は既に戻っている。この場合は `stale:` 行が理由と更新方法を添えて出る。
 
 ## ランタイムの構成
 

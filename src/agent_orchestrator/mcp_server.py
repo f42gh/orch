@@ -51,6 +51,7 @@ from agent_orchestrator.models import (
 from agent_orchestrator.router import load_routing_table
 from agent_orchestrator.result import save_git_diff
 from agent_orchestrator.stats import build_stats, summarize
+from agent_orchestrator.usage import collect_usage
 from agent_orchestrator.workflows import (
     DispatchedBatch,
     DispatchedWorkflowTask,
@@ -324,8 +325,9 @@ def build_server(config: Config) -> MCPServer:
         instructions=(
             "Delegate coding work to other agent CLIs (codex, grok, antigravity, claude). "
             "Each task runs in its own git worktree, so several can run at once without "
-            "colliding. Call orch_engines first, then confirm Run versus Batch and the "
-            "primary/fallback routes with the user. Use orch_run_create and "
+            "colliding. Call orch_engines first — and orch_usage when the plan is large "
+            "enough that an exhausted subscription would matter — then confirm Run versus "
+            "Batch and the primary/fallback routes with the user. Use orch_run_create and "
             "orch_run_dispatch when later work may be added; use orch_batch_dispatch for "
             "one complete independent task set. Dispatch is asynchronous: tools return "
             "immediately, then poll orch_status or block on orch_wait. Inspect every "
@@ -354,6 +356,20 @@ def build_server(config: Config) -> MCPServer:
             "routing_file": str(config.routing_path) if config.routing_path.exists() else None,
             "kinds": [kind.value for kind in TaskKind],
         }
+
+    @server.tool(
+        description=(
+            "Show how much of each engine's account quota is already spent and when it "
+            "resets, read from the files the engines themselves write. Call it before "
+            "routing a large batch. Every reading carries observed_at and age_seconds "
+            "because these are cached snapshots, not live figures — claude's is only "
+            "refreshed while Claude Code runs. antigravity reports no quota at all, and "
+            "says so in its notes rather than being omitted. This is account-wide usage; "
+            "orch_stats covers what the tasks in this database spent."
+        )
+    )
+    def orch_usage() -> dict[str, Any]:
+        return collect_usage().describe()
 
     @server.tool(
         description=(

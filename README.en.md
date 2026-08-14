@@ -82,7 +82,8 @@ The direct workflow tools are `orch_run_create`, `orch_run_dispatch` and
 `orch_workflow_list`/`orch_workflow_show` for resuming or inspecting saved workflows.
 `orch_status`, `orch_wait`, `orch_result` and `orch_diff` follow one task through to its
 patch, `orch_adopt` takes the work out of the worktree, and `orch_stats` returns the
-aggregation described below — cost, tokens, durations and quota.
+aggregation described below — cost, tokens, durations and quota. `orch_usage` reports what
+is left on each engine's account and when it resets.
 See the [Claude Code playbook](docs/CLAUDE-PLAYBOOK.md) for patterns such as fan-out and
 having one engine implement while a different one reviews.
 
@@ -255,6 +256,51 @@ This is a **snapshot of the account, not a per-task cost, and it is never summed
 `used_percent` is account-global and quantised to whole points, so two tasks running at
 once cannot be told apart in it and a short task does not move it at all. Per-task
 consumption is what the token counts are for.
+
+## What is left on each engine
+
+Where `stats` answers "what did the tasks in this database cost", `agentctl usage` answers
+"how much of each subscription is left" — account-wide, including everything spent outside
+orch. `orch_usage` returns the same listing to Claude.
+
+```bash
+uv run agentctl usage          # all four engines
+uv run agentctl usage --json   # one JSON object
+```
+
+```
+engine       installed  plan        window          used   resets_at          in      observed  detail
+codex        yes        plus        primary (7d)    8.0%   2026-08-20T12:38Z  5d23h   53m ago   -
+claude       yes        claude_pro  five_hour (5h)  1.0%   2026-08-11T17:40Z  elapsed 3d0h ago  -
+claude       yes        claude_pro  seven_day (7d)  57.0%  2026-08-11T23:00Z  elapsed 3d0h ago  -
+claude       yes        claude_pro  extra_usage     85.9%  -                  -       3d0h ago  8593/10000 credits, disabled (out_of_credits)
+grok         yes        SuperGrok   credits (7d)    3.0%   2026-08-12T21:13Z  elapsed 2d16h ago -
+antigravity  yes        -           -               -      -                  -       -         -
+
+source: codex /Users/f42/.codex/sessions/2026/08/12/rollout-…jsonl
+stale: claude a window reset after this reading, so real usage is lower than shown — …
+note: antigravity agy reports no quota: its JSON result carries tokens only, …
+```
+
+No engine offers an API for this. All that exists is **the file each engine writes for
+itself**, so `usage` reads those and nothing else: it spawns no process and opens no auth
+file — a command for checking quota should not be able to spend it, and has no reason to
+read a token. Per-engine sources and the measurements behind them are in
+`docs/engine-capabilities.md`.
+
+That makes *when the reading was taken* matter as much as the number, so every row carries
+its age and the file it came from:
+
+- **codex** records one every turn, so it is almost always current.
+- **claude** caches the `/usage` reading and only refreshes it while Claude Code runs. A
+  reading several days old is normal.
+- **grok** writes one each time it starts.
+- **antigravity** reports nothing, and is listed with that as its reason rather than
+  omitted — a missing row cannot be told apart from an engine that is not installed.
+
+A row whose `in` reads `elapsed` had its window reset **after** the reading, so the
+percentage beside it has already come back; a `stale:` line then says so and how to
+refresh it.
 
 ## Runtime layout
 

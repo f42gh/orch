@@ -355,3 +355,24 @@ def test_dispatch_reports_the_branch_immediately(env) -> None:
     stored = TaskStore(config).get_task("task-0001")
     assert stored is not None
     assert stored.branch_name == "agent/grok/task-0001"
+
+
+def test_usage_reports_every_engine_without_touching_the_database(env) -> None:
+    """The quota tool is a read of engine-owned files, so it must not write a task row."""
+    config, _, spawned = env
+    server = build_server(config)
+
+    payload = tool(server, "orch_usage")()
+
+    assert [entry["engine"] for entry in payload["engines"]] == [
+        "codex",
+        "claude",
+        "grok",
+        "antigravity",
+    ]
+    # Every entry says when it was read and what it was read from, or why it is empty.
+    for entry in payload["engines"]:
+        assert entry["source"] is not None or entry["notes"]
+        assert "age_seconds" in entry and "expired" in entry
+    assert spawned == []
+    assert TaskStore(config).list_tasks() == []

@@ -4,7 +4,7 @@ import argparse
 import json
 import sys
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -33,6 +33,7 @@ from agent_orchestrator.models import (
 )
 from agent_orchestrator.router import load_routing_table
 from agent_orchestrator.stats import Stats, Totals, build_stats, summarize
+from agent_orchestrator.usage import UsageReport, collect_usage
 from agent_orchestrator.workflows import (
     DispatchedBatch,
     DispatchedWorkflowTask,
@@ -134,6 +135,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     engines_parser.add_argument(
         "--json", action="store_true", help="print engines and routing as one JSON line"
+    )
+
+    usage_parser = subparsers.add_parser(
+        "usage",
+        help="show each engine's own account quota reading and when it resets",
+    )
+    usage_parser.add_argument(
+        "--json", action="store_true", help="print one JSON object"
     )
 
     show_parser = subparsers.add_parser("show", help="show task details")
@@ -561,6 +570,83 @@ def _handle_stats(store: TaskStore, args: argparse.Namespace) -> None:
         _print_stats(stats)
 
 
+def _format_duration(delta: timedelta) -> str:
+    """A rough gap, largest two units only: nobody schedules work by the second."""
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return f"{max(seconds, 0)}s"
+    minutes, _ = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    days, hours = divmod(hours, 24)
+    if days:
+        return f"{days}d{hours}h"
+    if hours:
+        return f"{hours}h{minutes}m"
+    return f"{minutes}m"
+
+
+def _format_time_until(value: datetime | None, now: datetime) -> str:
+    if value is None:
+        return "-"
+    remaining = value - now
+    # A reset in the past means the reading predates it, so the percentage beside it
+    # is spent quota that has since come back. Saying so beats printing a negative.
+    return _format_duration(remaining) if remaining.total_seconds() > 0 else "elapsed"
+
+
+def _format_age(age_seconds: float | None) -> str:
+    if age_seconds is None:
+        return "-"
+    return f"{_format_duration(timedelta(seconds=age_seconds))} ago"
+
+
+def _print_usage(report: UsageReport) -> None:
+    now = report.collected_at
+    print("engine\tinstalled\tplan\twindow\tused\tresets_at\tin\tobserved\tdetail")
+    for usage in report.engines:
+        installed = "yes" if usage.installed else "no"
+        plan = usage.plan or "-"
+        age = _format_age(
+            usage.age(now).total_seconds() if usage.age(now) is not None else None
+        )
+        if not usage.windows:
+            print(f"{usage.engine.value}\t{installed}\t{plan}\t-\t-\t-\t-\t{age}\t-")
+            continue
+        for window in usage.windows:
+            label = window.label
+            if window.window_minutes is not None:
+                label = f"{label} ({_format_window_minutes(window.window_minutes)})"
+            used = f"{window.used_pct:.1f}%" if window.used_pct is not None else "-"
+            print(
+                f"{usage.engine.value}\t{installed}\t{plan}\t{label}\t{used}\t"
+                f"{_format_quota_reset(window.resets_at)}\t"
+                f"{_format_time_until(window.resets_at, now)}\t{age}\t"
+                f"{window.detail or '-'}"
+            )
+
+    footer = [
+        f"source: {usage.engine.value} {usage.source}"
+        for usage in report.engines
+        if usage.source
+    ] + [
+        # The elapsed reset is already in the table; what it means for the percentage
+        # beside it is not, and that is the part someone reading a quota acts on.
+        f"stale: {usage.engine.value} a window reset after this reading, so real usage "
+        f"is lower than shown"
+        + (f" — {usage.refresh_hint}" if usage.refresh_hint else "")
+        for usage in report.engines
+        if usage.expired(now)
+    ] + [
+        f"note: {usage.engine.value} {note}"
+        for usage in report.engines
+        for note in usage.notes
+    ]
+    if footer:
+        print()
+        for line in footer:
+            print(line)
+
+
 def _print_workflow(payload: Mapping[str, Any]) -> None:
     print(f"{payload.get('type', 'workflow')} {payload.get('workflow_id', '?')}")
     print(f"status: {payload.get('status', '-')}")
@@ -928,6 +1014,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.command == "start":
         # Let the wizard reject a pipe/non-TTY before creating the runtime database.
         run_start_wizard(config, as_json=args.json)
+        return
+    if args.command == "usage":
+        # Reads engine-owned files only, so it must not create the runtime database.
+        report = collect_usage()
+        if args.json:
+            _print_json(report.describe())
+        else:
+            _print_usage(report)
         return
     store = TaskStore(config)
 
