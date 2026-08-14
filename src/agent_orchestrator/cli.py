@@ -4,6 +4,7 @@ import argparse
 import json
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
@@ -54,6 +55,28 @@ from agent_orchestrator.workflows import (
     list_workflows,
     show_workflow,
 )
+
+
+@dataclass
+class Context:
+    """What every subcommand handler is handed.
+
+    The store is built on first use, not up front. Constructing a `TaskStore` creates
+    the runtime directories and the SQLite schema as a side effect, and two commands
+    answer without a database at all: `usage` reads files the engines wrote, and
+    `start` refuses a non-TTY before anything exists. Making the store lazy is what
+    keeps `agentctl usage` from conjuring a runtime root — it used to depend on those
+    two commands returning early, before the line that built the store.
+    """
+
+    config: Config
+    _store: TaskStore | None = None
+
+    @property
+    def store(self) -> TaskStore:
+        if self._store is None:
+            self._store = TaskStore(self.config)
+        return self._store
 
 
 def _add_task_arguments(parser: argparse.ArgumentParser) -> None:
@@ -108,18 +131,23 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     add_parser = subparsers.add_parser("add", help="add a task to the queue without starting it")
+    add_parser.set_defaults(func=_handle_add)
     _add_task_arguments(add_parser)
 
     dispatch_parser = subparsers.add_parser(
         "dispatch", help="add a task and start its detached worker immediately"
     )
+    dispatch_parser.set_defaults(func=_handle_dispatch)
     _add_task_arguments(dispatch_parser)
     dispatch_parser.add_argument(
         "--json", action="store_true", help="print the created task as one JSON line"
     )
 
-    subparsers.add_parser("list", help="list tasks")
+    list_parser = subparsers.add_parser("list", help="list tasks")
+    list_parser.set_defaults(func=_handle_list)
+
     stats_parser = subparsers.add_parser("stats", help="summarize task outcomes and usage")
+    stats_parser.set_defaults(func=_handle_stats)
     stats_parser.add_argument("--json", action="store_true", help="print one JSON object")
     stats_parser.add_argument("--repo", default=None)
     stats_parser.add_argument("--workflow", dest="workflow_id", default=None)
@@ -139,6 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
     engines_parser = subparsers.add_parser(
         "engines", help="show installed engines and the routing table"
     )
+    engines_parser.set_defaults(func=_handle_engines)
     engines_parser.add_argument(
         "--json", action="store_true", help="print engines and routing as one JSON line"
     )
@@ -147,14 +176,17 @@ def build_parser() -> argparse.ArgumentParser:
         "usage",
         help="show each engine's own account quota reading and when it resets",
     )
+    usage_parser.set_defaults(func=_handle_usage)
     usage_parser.add_argument(
         "--json", action="store_true", help="print one JSON object"
     )
 
     show_parser = subparsers.add_parser("show", help="show task details")
+    show_parser.set_defaults(func=_handle_show)
     show_parser.add_argument("task_id")
 
     daemon_parser = subparsers.add_parser("daemon", help="run daemon")
+    daemon_parser.set_defaults(func=_handle_daemon)
     daemon_parser.add_argument("--once", action="store_true")
     daemon_parser.add_argument("--idle-sleep", type=float, default=2.0)
     daemon_parser.add_argument("--max-concurrency", type=int, default=2)
@@ -162,9 +194,11 @@ def build_parser() -> argparse.ArgumentParser:
     start_parser = subparsers.add_parser(
         "start", help="interactively create a persistent Run or one-shot Batch"
     )
+    start_parser.set_defaults(func=_handle_start)
     _add_workflow_output_argument(start_parser)
 
     run_parser = subparsers.add_parser("run", help="manage persistent Run workflows")
+    run_parser.set_defaults(func=_handle_run)
     run_subparsers = run_parser.add_subparsers(dest="run_command", required=True)
 
     run_create = run_subparsers.add_parser("create", help="create an open Run")
@@ -202,6 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_workflow_output_argument(run_close)
 
     batch_parser = subparsers.add_parser("batch", help="manage sealed Batch workflows")
+    batch_parser.set_defaults(func=_handle_batch)
     batch_subparsers = batch_parser.add_subparsers(dest="batch_command", required=True)
     batch_dispatch = batch_subparsers.add_parser(
         "dispatch", help="validate, persist, and start a complete independent task set"
@@ -224,6 +259,7 @@ def build_parser() -> argparse.ArgumentParser:
     install_parser = subparsers.add_parser(
         "install-claude-command", help="install the bundled /orch command for Claude Code"
     )
+    install_parser.set_defaults(func=_handle_install)
     install_parser.add_argument("--target", default=None, help="override ~/.claude/commands/orch.md")
     install_parser.add_argument(
         "--locale",
@@ -347,13 +383,13 @@ def _print_stats(stats: Stats) -> None:
         )
 
 
-def _handle_stats(store: TaskStore, args: argparse.Namespace) -> None:
+def _handle_stats(args: argparse.Namespace, ctx: Context) -> None:
     try:
         engine = parse_engine(args.engine)
         since = parse_iso_datetime(args.since, "--since")
         until = parse_iso_datetime(args.until, "--until")
         stats = build_stats(
-            store.list_tasks(
+            ctx.store.list_tasks(
                 engine=engine,
                 kind=TaskKind(args.kind) if args.kind else None,
                 repo_path=Path(args.repo) if args.repo else None,
@@ -709,7 +745,8 @@ def run_start_wizard(
     return payload
 
 
-def _handle_run(config: Config, store: TaskStore, args: argparse.Namespace) -> None:
+def _handle_run(args: argparse.Namespace, ctx: Context) -> None:
+    config, store = ctx.config, ctx.store
     try:
         if args.run_command == "create":
             routes = route_overrides_from_flags(args.route, args.fallback)
@@ -757,7 +794,8 @@ def _handle_run(config: Config, store: TaskStore, args: argparse.Namespace) -> N
         _print_workflow(payload)
 
 
-def _handle_batch(config: Config, store: TaskStore, args: argparse.Namespace) -> None:
+def _handle_batch(args: argparse.Namespace, ctx: Context) -> None:
+    config, store = ctx.config, ctx.store
     try:
         if args.batch_command == "dispatch":
             routes = route_overrides_from_flags(args.route, args.fallback)
@@ -790,7 +828,7 @@ def _handle_batch(config: Config, store: TaskStore, args: argparse.Namespace) ->
         _print_workflow(payload)
 
 
-def _handle_install(args: argparse.Namespace) -> None:
+def _handle_install(args: argparse.Namespace, ctx: Context) -> None:
     try:
         result = install_command(
             Path(args.target) if args.target else None,
@@ -807,159 +845,144 @@ def _handle_install(args: argparse.Namespace) -> None:
         print(f"backup: {result.backup_path}")
 
 
-def main(argv: Sequence[str] | None = None) -> None:
-    args = build_parser().parse_args(list(argv) if argv is not None else None)
-    if args.command == "install-claude-command":
-        _handle_install(args)
-        return
+def _handle_add(args: argparse.Namespace, ctx: Context) -> None:
+    try:
+        engine = parse_engine(args.engine)
+    except WorkflowError as exc:
+        raise SystemExit(str(exc)) from None
+    task = ctx.store.add_task(
+        repo_path=Path(args.repo),
+        task=args.task,
+        risk=Risk(args.risk),
+        priority=Priority(args.priority),
+        kind=TaskKind(args.kind),
+        engine=engine,
+        parent_id=args.parent,
+        base_ref=args.base_ref,
+    )
+    print(f"added {task.id}")
+    print(f"status: {task.status.value}")
+    print(f"kind: {task.kind.value}")
+    print(f"engine: {task.engine.value if task.engine else 'auto (chosen at run time)'}")
+    print(f"repo: {task.repo_path}")
 
-    config = load_config(args.runtime_root)
-    if args.command == "start":
-        # Let the wizard reject a pipe/non-TTY before creating the runtime database.
-        run_start_wizard(config, as_json=args.json)
-        return
-    if args.command == "usage":
-        # Reads engine-owned files only, so it must not create the runtime database.
-        report = collect_usage()
-        if args.json:
-            _print_json(report.describe())
-        else:
-            _print_usage(report)
-        return
-    store = TaskStore(config)
 
-    if args.command == "add":
-        try:
-            engine = parse_engine(args.engine)
-        except WorkflowError as exc:
-            raise SystemExit(str(exc)) from None
-        task = store.add_task(
-            repo_path=Path(args.repo),
+def _handle_dispatch(args: argparse.Namespace, ctx: Context) -> None:
+    try:
+        dispatched = dispatch_task(
+            ctx.config,
+            ctx.store,
+            repo=args.repo,
             task=args.task,
+            kind=TaskKind(args.kind),
             risk=Risk(args.risk),
             priority=Priority(args.priority),
-            kind=TaskKind(args.kind),
-            engine=engine,
+            engine=parse_engine(args.engine),
             parent_id=args.parent,
             base_ref=args.base_ref,
         )
-        print(f"added {task.id}")
-        print(f"status: {task.status.value}")
-        print(f"kind: {task.kind.value}")
-        print(f"engine: {task.engine.value if task.engine else 'auto (chosen at run time)'}")
-        print(f"repo: {task.repo_path}")
-        return
+    except (DispatchError, WorkflowError) as exc:
+        raise SystemExit(str(exc)) from None
+    if args.json:
+        print(json.dumps(dispatched.describe(ctx.config), ensure_ascii=False))
+    else:
+        print(f"dispatched {dispatched.task.id}")
+        print(f"engine: {dispatched.engine.value}")
+        print(f"branch: {dispatched.branch}")
+        print(f"worker_pid: {dispatched.worker_pid}")
 
-    if args.command == "dispatch":
-        try:
-            dispatched = dispatch_task(
-                config,
-                store,
-                repo=args.repo,
-                task=args.task,
-                kind=TaskKind(args.kind),
-                risk=Risk(args.risk),
-                priority=Priority(args.priority),
-                engine=parse_engine(args.engine),
-                parent_id=args.parent,
-                base_ref=args.base_ref,
-            )
-        except (DispatchError, WorkflowError) as exc:
-            raise SystemExit(str(exc)) from None
-        if args.json:
-            print(json.dumps(dispatched.describe(config), ensure_ascii=False))
-        else:
-            print(f"dispatched {dispatched.task.id}")
-            print(f"engine: {dispatched.engine.value}")
-            print(f"branch: {dispatched.branch}")
-            print(f"worker_pid: {dispatched.worker_pid}")
-        return
 
-    if args.command == "list":
-        print("task_id\tstatus\tkind\tengine\trisk\tpriority\tcost\tshort_task")
-        for task in store.list_tasks():
-            short = task.task.replace("\n", " ")[:50]
-            cost = f"{task.cost_usd:.4f}" if task.cost_usd is not None else "-"
-            print(
-                f"{task.id}\t{task.status.value}\t{task.kind.value}\t"
-                f"{task.engine.value if task.engine else '-'}\t{task.risk.value}\t"
-                f"{task.priority.value}\t{cost}\t{short}"
-            )
-        return
+def _handle_list(args: argparse.Namespace, ctx: Context) -> None:
+    print("task_id\tstatus\tkind\tengine\trisk\tpriority\tcost\tshort_task")
+    for task in ctx.store.list_tasks():
+        short = task.task.replace("\n", " ")[:50]
+        cost = f"{task.cost_usd:.4f}" if task.cost_usd is not None else "-"
+        print(
+            f"{task.id}\t{task.status.value}\t{task.kind.value}\t"
+            f"{task.engine.value if task.engine else '-'}\t{task.risk.value}\t"
+            f"{task.priority.value}\t{cost}\t{short}"
+        )
 
-    if args.command == "stats":
-        _handle_stats(store, args)
-        return
 
-    if args.command == "engines":
-        table = load_routing_table(config.routing_path)
-        if args.json:
-            print(
-                json.dumps(
-                    {
-                        "engines": [
-                            capabilities.describe()
-                            for capabilities in probe_all(refresh=True).values()
-                        ],
-                        "routing": table.describe(),
-                        "kinds": [kind.value for kind in TaskKind],
-                    },
-                    ensure_ascii=False,
-                )
-            )
-            return
-        print("engine\tversion\tstructured\tcost")
-        for capabilities in probe_all(refresh=True).values():
-            print(
-                f"{capabilities.engine.value}\t{capabilities.version}\t"
-                f"{capabilities.structured_output}\t{capabilities.reports_cost}"
-            )
-        print("\nkind\tengine\tfallbacks\twrites")
-        for entry in table.describe():
-            fallbacks = ",".join(entry["fallbacks"]) or "-"  # type: ignore[arg-type]
-            print(f"{entry['kind']}\t{entry['engine']}\t{fallbacks}\t{entry['writes']}")
-        return
-
-    if args.command == "show":
-        task = store.get_task(args.task_id)
-        if task is None:
-            raise SystemExit(f"task not found: {args.task_id}")
-        log_path = config.logs_dir / task.id
-        print(f"task_id: {task.id}")
-        print(f"task: {task.task}")
-        print(f"status: {task.status.value}")
-        print(f"kind: {task.kind.value}")
-        print(f"engine: {task.engine.value if task.engine else '-'}")
-        print(f"repo: {task.repo_path}")
-        print(f"workspace_path: {task.workspace_path}")
-        print(f"branch_name: {task.branch_name}")
-        print(f"cost_usd: {task.cost_usd if task.cost_usd is not None else '-'}")
-        print(f"exit_code: {task.exit_code if task.exit_code is not None else '-'}")
-        print(f"log_path: {log_path}")
-        print(f"result_summary: {task.result_summary}")
-        print(f"diff_path: {log_path / 'diff.patch'}")
-        if task.error:
-            print(f"error: {task.error}")
-        return
-
-    if args.command == "daemon":
-        import asyncio
-
-        asyncio.run(
-            run_daemon(
-                store,
-                once=args.once,
-                idle_sleep=args.idle_sleep,
-                max_concurrency=args.max_concurrency,
+def _handle_engines(args: argparse.Namespace, ctx: Context) -> None:
+    table = load_routing_table(ctx.config.routing_path)
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "engines": [
+                        capabilities.describe()
+                        for capabilities in probe_all(refresh=True).values()
+                    ],
+                    "routing": table.describe(),
+                    "kinds": [kind.value for kind in TaskKind],
+                },
+                ensure_ascii=False,
             )
         )
         return
+    print("engine\tversion\tstructured\tcost")
+    for capabilities in probe_all(refresh=True).values():
+        print(
+            f"{capabilities.engine.value}\t{capabilities.version}\t"
+            f"{capabilities.structured_output}\t{capabilities.reports_cost}"
+        )
+    print("\nkind\tengine\tfallbacks\twrites")
+    for entry in table.describe():
+        fallbacks = ",".join(entry["fallbacks"]) or "-"  # type: ignore[arg-type]
+        print(f"{entry['kind']}\t{entry['engine']}\t{fallbacks}\t{entry['writes']}")
 
-    if args.command == "run":
-        _handle_run(config, store, args)
-        return
-    if args.command == "batch":
-        _handle_batch(config, store, args)
+
+def _handle_usage(args: argparse.Namespace, ctx: Context) -> None:
+    report = collect_usage()
+    if args.json:
+        _print_json(report.describe())
+    else:
+        _print_usage(report)
+
+
+def _handle_show(args: argparse.Namespace, ctx: Context) -> None:
+    task = ctx.store.get_task(args.task_id)
+    if task is None:
+        raise SystemExit(f"task not found: {args.task_id}")
+    log_path = ctx.config.logs_dir / task.id
+    print(f"task_id: {task.id}")
+    print(f"task: {task.task}")
+    print(f"status: {task.status.value}")
+    print(f"kind: {task.kind.value}")
+    print(f"engine: {task.engine.value if task.engine else '-'}")
+    print(f"repo: {task.repo_path}")
+    print(f"workspace_path: {task.workspace_path}")
+    print(f"branch_name: {task.branch_name}")
+    print(f"cost_usd: {task.cost_usd if task.cost_usd is not None else '-'}")
+    print(f"exit_code: {task.exit_code if task.exit_code is not None else '-'}")
+    print(f"log_path: {log_path}")
+    print(f"result_summary: {task.result_summary}")
+    print(f"diff_path: {log_path / 'diff.patch'}")
+    if task.error:
+        print(f"error: {task.error}")
+
+
+def _handle_daemon(args: argparse.Namespace, ctx: Context) -> None:
+    import asyncio
+
+    asyncio.run(
+        run_daemon(
+            ctx.store,
+            once=args.once,
+            idle_sleep=args.idle_sleep,
+            max_concurrency=args.max_concurrency,
+        )
+    )
+
+
+def _handle_start(args: argparse.Namespace, ctx: Context) -> None:
+    run_start_wizard(ctx.config, as_json=args.json)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = build_parser().parse_args(list(argv) if argv is not None else None)
+    args.func(args, Context(load_config(args.runtime_root)))
 
 
 if __name__ == "__main__":
