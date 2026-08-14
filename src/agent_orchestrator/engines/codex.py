@@ -1,7 +1,7 @@
 """OpenAI Codex CLI adapter (`codex exec`).
 
 Measured against codex 0.147.0 — see docs/engine-capabilities.md. The critical detail
-is that `codex exec` blocks forever on a non-TTY unless stdin is closed; `worker_cli`
+is that `codex exec` blocks forever on a non-TTY unless stdin is closed; `worker`
 always passes DEVNULL.
 """
 

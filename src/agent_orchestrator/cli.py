@@ -15,7 +15,6 @@ from agent_orchestrator.command_installer import (
     install_command,
 )
 from agent_orchestrator.config import Config, load_config
-from agent_orchestrator.daemon import run_daemon
 from agent_orchestrator.db import TaskStore
 from agent_orchestrator.dispatch import DispatchError, dispatch_task
 from agent_orchestrator.engines import probe_all
@@ -125,17 +124,43 @@ def _add_workflow_output_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="print one JSON object")
 
 
+def _runtime_root_parent() -> argparse.ArgumentParser:
+    """`--runtime-root` after the subcommand as well as before it.
+
+    `agentd` and `agentapi` take it after their subcommand, so `agentctl` accepting it
+    only before one was a difference nobody chose. The default is SUPPRESS rather than
+    None: an argparse subparser writes its defaults over values the main parser already
+    set, so a plain default here would erase `agentctl --runtime-root X list`.
+    """
+    parent = argparse.ArgumentParser(add_help=False)
+    parent.add_argument(
+        "--runtime-root",
+        default=argparse.SUPPRESS,
+        metavar="PATH",
+        help="override the runtime root (default: $AGENT_ORCHESTRATOR_RUNTIME_ROOT "
+        "or ~/agent-runtime)",
+    )
+    return parent
+
+
 def build_parser() -> argparse.ArgumentParser:
+    runtime_root = _runtime_root_parent()
     parser = argparse.ArgumentParser(prog="agentctl")
-    parser.add_argument("--runtime-root", default=None, help="override runtime root")
+    parser.add_argument(
+        "--runtime-root",
+        default=None,
+        metavar="PATH",
+        help="override the runtime root (default: $AGENT_ORCHESTRATOR_RUNTIME_ROOT "
+        "or ~/agent-runtime)",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    add_parser = subparsers.add_parser("add", help="add a task to the queue without starting it")
+    add_parser = subparsers.add_parser("add", parents=[runtime_root], help="add a task to the queue without starting it")
     add_parser.set_defaults(func=_handle_add)
     _add_task_arguments(add_parser)
 
     dispatch_parser = subparsers.add_parser(
-        "dispatch", help="add a task and start its detached worker immediately"
+        "dispatch", parents=[runtime_root], help="add a task and start its detached worker immediately"
     )
     dispatch_parser.set_defaults(func=_handle_dispatch)
     _add_task_arguments(dispatch_parser)
@@ -143,10 +168,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="print the created task as one JSON line"
     )
 
-    list_parser = subparsers.add_parser("list", help="list tasks")
+    list_parser = subparsers.add_parser("list", parents=[runtime_root], help="list tasks")
     list_parser.set_defaults(func=_handle_list)
 
-    stats_parser = subparsers.add_parser("stats", help="summarize task outcomes and usage")
+    stats_parser = subparsers.add_parser("stats", parents=[runtime_root], help="summarize task outcomes and usage")
     stats_parser.set_defaults(func=_handle_stats)
     stats_parser.add_argument("--json", action="store_true", help="print one JSON object")
     stats_parser.add_argument("--repo", default=None)
@@ -165,7 +190,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
     )
     engines_parser = subparsers.add_parser(
-        "engines", help="show installed engines and the routing table"
+        "engines", parents=[runtime_root], help="show installed engines and the routing table"
     )
     engines_parser.set_defaults(func=_handle_engines)
     engines_parser.add_argument(
@@ -173,7 +198,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     usage_parser = subparsers.add_parser(
-        "usage",
+        "usage", parents=[runtime_root],
         help="show each engine's own account quota reading and when it resets",
     )
     usage_parser.set_defaults(func=_handle_usage)
@@ -181,33 +206,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="print one JSON object"
     )
 
-    show_parser = subparsers.add_parser("show", help="show task details")
+    show_parser = subparsers.add_parser("show", parents=[runtime_root], help="show task details")
     show_parser.set_defaults(func=_handle_show)
     show_parser.add_argument("task_id")
 
-    daemon_parser = subparsers.add_parser("daemon", help="run daemon")
-    daemon_parser.set_defaults(func=_handle_daemon)
-    daemon_parser.add_argument("--once", action="store_true")
-    daemon_parser.add_argument("--idle-sleep", type=float, default=2.0)
-    daemon_parser.add_argument("--max-concurrency", type=int, default=2)
-
     start_parser = subparsers.add_parser(
-        "start", help="interactively create a persistent Run or one-shot Batch"
+        "start", parents=[runtime_root], help="interactively create a persistent Run or one-shot Batch"
     )
     start_parser.set_defaults(func=_handle_start)
     _add_workflow_output_argument(start_parser)
 
-    run_parser = subparsers.add_parser("run", help="manage persistent Run workflows")
+    run_parser = subparsers.add_parser("run", parents=[runtime_root], help="manage persistent Run workflows")
     run_parser.set_defaults(func=_handle_run)
     run_subparsers = run_parser.add_subparsers(dest="run_command", required=True)
 
-    run_create = run_subparsers.add_parser("create", help="create an open Run")
+    run_create = run_subparsers.add_parser("create", parents=[runtime_root], help="create an open Run")
     run_create.add_argument("--repo", required=True)
     _add_route_arguments(run_create)
     _add_workflow_output_argument(run_create)
 
     run_dispatch = run_subparsers.add_parser(
-        "dispatch", help="add and start one task under an open Run"
+        "dispatch", parents=[runtime_root], help="add and start one task under an open Run"
     )
     run_dispatch.add_argument("run_id", metavar="RUN_ID")
     run_dispatch.add_argument("--task", required=True)
@@ -226,20 +245,20 @@ def build_parser() -> argparse.ArgumentParser:
     run_dispatch.add_argument("--base-ref", default=None)
     _add_workflow_output_argument(run_dispatch)
 
-    run_list = run_subparsers.add_parser("list", help="list Run workflows")
+    run_list = run_subparsers.add_parser("list", parents=[runtime_root], help="list Run workflows")
     _add_workflow_output_argument(run_list)
-    run_show = run_subparsers.add_parser("show", help="show one Run and its tasks")
+    run_show = run_subparsers.add_parser("show", parents=[runtime_root], help="show one Run and its tasks")
     run_show.add_argument("run_id", metavar="RUN_ID")
     _add_workflow_output_argument(run_show)
-    run_close = run_subparsers.add_parser("close", help="close a Run to further dispatch")
+    run_close = run_subparsers.add_parser("close", parents=[runtime_root], help="close a Run to further dispatch")
     run_close.add_argument("run_id", metavar="RUN_ID")
     _add_workflow_output_argument(run_close)
 
-    batch_parser = subparsers.add_parser("batch", help="manage sealed Batch workflows")
+    batch_parser = subparsers.add_parser("batch", parents=[runtime_root], help="manage sealed Batch workflows")
     batch_parser.set_defaults(func=_handle_batch)
     batch_subparsers = batch_parser.add_subparsers(dest="batch_command", required=True)
     batch_dispatch = batch_subparsers.add_parser(
-        "dispatch", help="validate, persist, and start a complete independent task set"
+        "dispatch", parents=[runtime_root], help="validate, persist, and start a complete independent task set"
     )
     batch_dispatch.add_argument("--repo", required=True)
     _add_route_arguments(batch_dispatch)
@@ -250,14 +269,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="JSON array of task objects; use - to read stdin",
     )
     _add_workflow_output_argument(batch_dispatch)
-    batch_list = batch_subparsers.add_parser("list", help="list Batch workflows")
+    batch_list = batch_subparsers.add_parser("list", parents=[runtime_root], help="list Batch workflows")
     _add_workflow_output_argument(batch_list)
-    batch_show = batch_subparsers.add_parser("show", help="show one Batch and its tasks")
+    batch_show = batch_subparsers.add_parser("show", parents=[runtime_root], help="show one Batch and its tasks")
     batch_show.add_argument("batch_id", metavar="BATCH_ID")
     _add_workflow_output_argument(batch_show)
 
     install_parser = subparsers.add_parser(
-        "install-claude-command", help="install the bundled /orch command for Claude Code"
+        "install-claude-command", parents=[runtime_root], help="install the bundled /orch command for Claude Code"
     )
     install_parser.set_defaults(func=_handle_install)
     install_parser.add_argument("--target", default=None, help="override ~/.claude/commands/orch.md")
@@ -961,19 +980,6 @@ def _handle_show(args: argparse.Namespace, ctx: Context) -> None:
     print(f"diff_path: {log_path / 'diff.patch'}")
     if task.error:
         print(f"error: {task.error}")
-
-
-def _handle_daemon(args: argparse.Namespace, ctx: Context) -> None:
-    import asyncio
-
-    asyncio.run(
-        run_daemon(
-            ctx.store,
-            once=args.once,
-            idle_sleep=args.idle_sleep,
-            max_concurrency=args.max_concurrency,
-        )
-    )
 
 
 def _handle_start(args: argparse.Namespace, ctx: Context) -> None:

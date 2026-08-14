@@ -76,7 +76,7 @@ class ClaudeAdapter:
         for rule in policy.deny_rules:
             argv += ["--disallowed-tools", rule]
 
-        # Unlike agy, claude honours the process cwd, which `worker_cli` sets to the
+        # Unlike agy, claude honours the process cwd, which `worker` sets to the
         # worktree; --add-dir is belt and braces so the tree is definitely in scope.
         return RunSpec(argv=argv)
 

@@ -19,7 +19,7 @@ server in `mcp_server.py`.
 - `src/agent_orchestrator/command_installer.py` and `templates/orch.md` — safely install
   the Claude Code `/orch` workflow command. Never overwrite a different user command
   without a backup and explicit force.
-- `src/agent_orchestrator/worker_cli.py` — everything process-shaped: spawning, live log
+- `src/agent_orchestrator/worker.py` — everything process-shaped: spawning, live log
   capture, timeouts, writing results back.
 - `src/agent_orchestrator/mcp_server.py` — the MCP control plane. Must never print to
   stdout; that is the transport.

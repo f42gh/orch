@@ -9,7 +9,7 @@ from agent_orchestrator.engines import available_engines
 from agent_orchestrator.models import Task, TaskStatus
 from agent_orchestrator.router import RoutingError, load_routing_table, resolve_engine
 from agent_orchestrator.workspace import WorkspaceError, create_workspace
-from agent_orchestrator.worker_cli import run_task
+from agent_orchestrator.worker import run_task
 
 DEFAULT_CONCURRENCY = 2
 

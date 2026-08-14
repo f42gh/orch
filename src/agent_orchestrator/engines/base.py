@@ -1,7 +1,7 @@
 """Common shape for every engine adapter.
 
 An adapter is deliberately pure: it builds an argv and parses bytes. Spawning,
-logging, timeouts and database writes all live in `worker_cli`, so adapters can be
+logging, timeouts and database writes all live in `worker`, so adapters can be
 tested against the recorded fixtures in `tests/fixtures/` without running anything.
 """
 
@@ -63,7 +63,7 @@ class EngineResult:
 
 @dataclass(frozen=True, slots=True)
 class RunSpec:
-    """Everything `worker_cli` needs to start one engine process."""
+    """Everything `worker` needs to start one engine process."""
 
     argv: list[str]
     #: Written by the engine and read back after exit, when it supports one.
