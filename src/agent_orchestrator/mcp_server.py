@@ -24,6 +24,7 @@ import subprocess
 import time
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,13 @@ from agent_orchestrator.models import (
     WorkflowTaskRequest,
     WorkflowType,
 )
+from agent_orchestrator.parsing import (
+    parse_engine,
+    parse_enum,
+    parse_iso_datetime,
+    route_overrides,
+    task_request,
+)
 from agent_orchestrator.router import load_routing_table
 from agent_orchestrator.result import save_git_diff
 from agent_orchestrator.stats import build_stats, summarize
@@ -70,7 +78,6 @@ POLL_INTERVAL_S = 1.0
 #: How much of a patch to inline before telling the caller to read the file instead.
 DEFAULT_DIFF_BYTES = 60_000
 LOG_TAIL_LINES = 40
-ENGINE_ALIASES = {"agy": Engine.ANTIGRAVITY.value}
 
 
 def _store(config: Config) -> TaskStore:
@@ -82,121 +89,30 @@ def wait_budget(timeout_s: float) -> float:
     return max(1.0, min(float(timeout_s), MAX_WAIT_S))
 
 
-def _parse[T](enum: type[T], value: str | None, default: T | None = None) -> T | None:
-    if value is None:
-        return default
-    try:
-        return enum(value)  # type: ignore[call-arg]
-    except ValueError:
-        allowed = ", ".join(member.value for member in enum)  # type: ignore[attr-defined]
-        raise DispatchError(f"{value!r} is not one of: {allowed}") from None
+# The validation itself lives in `parsing`, shared with `agentctl`, and raises
+# `WorkflowError`. These wrappers exist only to keep this server's outward error type
+# `DispatchError` — an MCP caller should not have to know which module rejected it.
+def _parse[T: Enum](enum: type[T], value: str | None, default: T | None = None) -> T | None:
+    return _workflow_call(parse_enum, enum, value, default)
 
 
 def _parse_engine(value: str | None) -> Engine | None:
-    if value is None:
-        return None
-    normalized = ENGINE_ALIASES.get(value.strip(), value.strip())
-    try:
-        return Engine(normalized)
-    except ValueError:
-        allowed = ", ".join([*(engine.value for engine in Engine), "agy"])
-        raise DispatchError(f"engine {value!r} is not one of: {allowed}") from None
+    return _workflow_call(parse_engine, value)
 
 
 def _parse_iso_datetime(value: str | None, field: str) -> datetime | None:
-    if value is None:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        raise DispatchError(
-            f"invalid {field} datetime {value!r}; expected ISO 8601"
-        ) from None
+    return _workflow_call(parse_iso_datetime, value, field)
 
 
 def _parse_workflow_routes(
     routes: Mapping[str, str] | None,
     fallbacks: Mapping[str, Sequence[str]] | None,
 ) -> dict[TaskKind, WorkflowRouteOverride]:
-    primaries: dict[TaskKind, Engine] = {}
-    for raw_kind, raw_engine in (routes or {}).items():
-        try:
-            kind = TaskKind(raw_kind)
-        except ValueError:
-            allowed = ", ".join(kind.value for kind in TaskKind)
-            raise DispatchError(f"task kind {raw_kind!r} is not one of: {allowed}") from None
-        parsed = _parse_engine(raw_engine)
-        assert parsed is not None
-        primaries[kind] = parsed
-
-    manual: dict[TaskKind, tuple[Engine, ...]] = {}
-    for raw_kind, raw_chain in (fallbacks or {}).items():
-        try:
-            kind = TaskKind(raw_kind)
-        except ValueError:
-            allowed = ", ".join(item.value for item in TaskKind)
-            raise DispatchError(f"task kind {raw_kind!r} is not one of: {allowed}") from None
-        if kind not in primaries:
-            raise DispatchError(
-                f"fallbacks for {kind.value} require a matching explicit routes entry"
-            )
-        if isinstance(raw_chain, str) or not raw_chain:
-            raise DispatchError(f"fallbacks for {kind.value} must be a non-empty engine list")
-        parsed_chain: list[Engine] = []
-        for raw_engine in raw_chain:
-            if not isinstance(raw_engine, str) or not raw_engine.strip():
-                raise DispatchError(
-                    f"fallbacks for {kind.value} must contain non-empty engine names"
-                )
-            parsed = _parse_engine(raw_engine)
-            assert parsed is not None
-            parsed_chain.append(parsed)
-        manual[kind] = tuple(parsed_chain)
-
-    parsed_routes: dict[TaskKind, WorkflowRouteOverride] = {}
-    for kind, primary in primaries.items():
-        chain = manual.get(kind)
-        try:
-            parsed_routes[kind] = (
-                WorkflowRouteOverride(primary)
-                if chain is None
-                else WorkflowRouteOverride(primary, FallbackMode.MANUAL, chain)
-            )
-        except ValueError as exc:
-            raise DispatchError(f"route {kind.value}: {exc}") from None
-    return parsed_routes
+    return _workflow_call(route_overrides, routes, fallbacks)
 
 
 def _workflow_task_request(value: object, *, where: str) -> WorkflowTaskRequest:
-    if not isinstance(value, Mapping):
-        raise DispatchError(f"{where} must be an object")
-    allowed = {"task", "kind", "risk", "priority", "parent_id", "base_ref"}
-    unknown = sorted(str(key) for key in value if key not in allowed)
-    if unknown:
-        raise DispatchError(f"{where} has unknown fields: {', '.join(unknown)}")
-    task = value.get("task")
-    if not isinstance(task, str) or not task.strip():
-        raise DispatchError(f"{where}.task must be a non-empty string")
-    kind = _parse(TaskKind, value.get("kind", TaskKind.IMPLEMENT.value))
-    risk = _parse(Risk, value.get("risk", Risk.NORMAL.value))
-    priority = _parse(Priority, value.get("priority", Priority.NORMAL.value))
-    parent_id = value.get("parent_id")
-    base_ref = value.get("base_ref")
-    if parent_id is not None and not isinstance(parent_id, str):
-        raise DispatchError(f"{where}.parent_id must be a string or null")
-    if base_ref is not None and not isinstance(base_ref, str):
-        raise DispatchError(f"{where}.base_ref must be a string or null")
-    assert isinstance(kind, TaskKind)
-    assert isinstance(risk, Risk)
-    assert isinstance(priority, Priority)
-    return WorkflowTaskRequest(
-        task.strip(),
-        kind=kind,
-        risk=risk,
-        priority=priority,
-        parent_id=parent_id,
-        base_ref=base_ref,
-    )
+    return _workflow_call(task_request, value, where=where)
 
 
 def _workflow_summary(workflow: Workflow) -> dict[str, Any]:

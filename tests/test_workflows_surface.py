@@ -11,10 +11,8 @@ import pytest
 
 from agent_orchestrator.cli import (
     _interactive_routes,
-    _load_tasks_file,
     _print_workflow,
     _print_workflow_dispatch,
-    _route_overrides_from_flags,
     build_parser,
     main,
     run_start_wizard,
@@ -25,6 +23,7 @@ from agent_orchestrator.dispatch import DispatchError
 from agent_orchestrator.engines.base import Capabilities
 from agent_orchestrator.mcp_server import build_server
 from agent_orchestrator.models import Engine, FallbackMode, TaskKind, TaskStatus
+from agent_orchestrator.parsing import load_tasks_file, route_overrides_from_flags
 from agent_orchestrator.workflows import WorkflowError
 
 
@@ -132,7 +131,7 @@ def test_cli_parser_exposes_documented_commands_and_positional_run_id() -> None:
 
 
 def test_cli_route_flags_are_strict_and_canonicalize_agy() -> None:
-    routes = _route_overrides_from_flags(
+    routes = route_overrides_from_flags(
         ["ui_verify=agy", "implement=codex"],
         ["implement=claude,agy"],
     )
@@ -144,20 +143,20 @@ def test_cli_route_flags_are_strict_and_canonicalize_agy() -> None:
         Engine.ANTIGRAVITY,
     )
 
-    with pytest.raises(WorkflowError, match="matching explicit --route"):
-        _route_overrides_from_flags([], ["review=grok"])
+    with pytest.raises(WorkflowError, match="matching primary route"):
+        route_overrides_from_flags([], ["review=grok"])
     with pytest.raises(WorkflowError, match="duplicate --route"):
-        _route_overrides_from_flags(["review=grok", "review=codex"], [])
+        route_overrides_from_flags(["review=grok", "review=codex"], [])
     with pytest.raises(WorkflowError, match="duplicate --fallback"):
-        _route_overrides_from_flags(
+        route_overrides_from_flags(
             ["review=grok"], ["review=codex", "review=claude"]
         )
-    with pytest.raises(WorkflowError, match="non-empty engine list"):
-        _route_overrides_from_flags(["review=grok"], ["review=codex,,claude"])
+    with pytest.raises(WorkflowError, match="non-empty engine names"):
+        route_overrides_from_flags(["review=grok"], ["review=codex,,claude"])
 
 
 def test_tasks_file_accepts_stdin_and_validates_objects() -> None:
-    requests = _load_tasks_file(
+    requests = load_tasks_file(
         "-",
         stdin=io.StringIO(
             json.dumps(
@@ -172,9 +171,9 @@ def test_tasks_file_accepts_stdin_and_validates_objects() -> None:
     assert [request.task for request in requests] == ["first", "second"]
     assert requests[0].kind is TaskKind.REVIEW
     with pytest.raises(WorkflowError, match="at least one"):
-        _load_tasks_file("-", stdin=io.StringIO("[]"))
+        load_tasks_file("-", stdin=io.StringIO("[]"))
     with pytest.raises(WorkflowError, match="unknown fields"):
-        _load_tasks_file("-", stdin=io.StringIO('[{"task":"x","engine":"grok"}]'))
+        load_tasks_file("-", stdin=io.StringIO('[{"task":"x","engine":"grok"}]'))
 
 
 def test_start_rejects_non_tty_with_actionable_alternatives(
@@ -563,7 +562,7 @@ def test_human_run_dispatch_output_surfaces_spawn_error(
 def test_mcp_rejects_fallback_without_explicit_route(workflow_env) -> None:
     config, _, repo, _ = workflow_env
 
-    with pytest.raises(DispatchError, match="matching explicit routes entry"):
+    with pytest.raises(DispatchError, match="matching primary route"):
         tool(build_server(config), "orch_run_create")(
             repo=str(repo), fallbacks={"review": ["grok"]}
         )

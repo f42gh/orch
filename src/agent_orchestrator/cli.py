@@ -31,6 +31,14 @@ from agent_orchestrator.models import (
     WorkflowTaskRequest,
     WorkflowType,
 )
+from agent_orchestrator.parsing import (
+    load_tasks_file,
+    parse_engine,
+    parse_iso_datetime,
+    parse_kind,
+    require_engine,
+    route_overrides_from_flags,
+)
 from agent_orchestrator.router import load_routing_table
 from agent_orchestrator.stats import Stats, Totals, build_stats, summarize
 from agent_orchestrator.usage import UsageReport, collect_usage
@@ -45,9 +53,6 @@ from agent_orchestrator.workflows import (
     list_workflows,
     show_workflow,
 )
-
-
-ENGINE_ALIASES = {"agy": Engine.ANTIGRAVITY.value}
 
 
 def _add_task_arguments(parser: argparse.ArgumentParser) -> None:
@@ -229,138 +234,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--force", action="store_true", help="back up and replace a different existing file"
     )
     return parser
-
-
-def _parse_engine(value: str) -> Engine:
-    normalized = ENGINE_ALIASES.get(value.strip(), value.strip())
-    try:
-        return Engine(normalized)
-    except ValueError:
-        allowed = ", ".join([*(engine.value for engine in Engine), "agy"])
-        raise WorkflowError(f"engine {value!r} is not one of: {allowed}") from None
-
-
-def _parse_kind(value: str) -> TaskKind:
-    try:
-        return TaskKind(value.strip())
-    except ValueError:
-        allowed = ", ".join(kind.value for kind in TaskKind)
-        raise WorkflowError(f"task kind {value!r} is not one of: {allowed}") from None
-
-
-def _parse_iso_datetime(value: str | None, option: str) -> datetime | None:
-    if value is None:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        raise WorkflowError(
-            f"invalid {option} datetime {value!r}; expected ISO 8601"
-        ) from None
-
-
-def _parse_assignment(value: str, *, shape: str) -> tuple[str, str]:
-    if "=" not in value:
-        raise WorkflowError(f"expected {shape}, got {value!r}")
-    left, right = value.split("=", 1)
-    if not left.strip() or not right.strip():
-        raise WorkflowError(f"expected {shape}, got {value!r}")
-    return left.strip(), right.strip()
-
-
-def _route_overrides_from_flags(
-    route_flags: Sequence[str], fallback_flags: Sequence[str]
-) -> dict[TaskKind, WorkflowRouteOverride]:
-    primaries: dict[TaskKind, Engine] = {}
-    for raw in route_flags:
-        kind_raw, engine_raw = _parse_assignment(raw, shape="KIND=PRIMARY")
-        kind = _parse_kind(kind_raw)
-        if kind in primaries:
-            raise WorkflowError(f"duplicate --route for {kind.value}")
-        primaries[kind] = _parse_engine(engine_raw)
-
-    fallbacks: dict[TaskKind, tuple[Engine, ...]] = {}
-    for raw in fallback_flags:
-        kind_raw, engines_raw = _parse_assignment(raw, shape="KIND=E1,E2")
-        kind = _parse_kind(kind_raw)
-        if kind in fallbacks:
-            raise WorkflowError(f"duplicate --fallback for {kind.value}")
-        if kind not in primaries:
-            raise WorkflowError(
-                f"--fallback for {kind.value} requires a matching explicit --route"
-            )
-        parts = [part.strip() for part in engines_raw.split(",")]
-        if not parts or any(not part for part in parts):
-            raise WorkflowError(f"--fallback for {kind.value} must be a non-empty engine list")
-        fallbacks[kind] = tuple(_parse_engine(part) for part in parts)
-
-    overrides: dict[TaskKind, WorkflowRouteOverride] = {}
-    for kind, primary in primaries.items():
-        chain = fallbacks.get(kind)
-        try:
-            overrides[kind] = (
-                WorkflowRouteOverride(primary)
-                if chain is None
-                else WorkflowRouteOverride(primary, FallbackMode.MANUAL, chain)
-            )
-        except ValueError as exc:
-            raise WorkflowError(f"route {kind.value}: {exc}") from None
-    return overrides
-
-
-def _task_request_from_mapping(value: object, *, where: str) -> WorkflowTaskRequest:
-    if not isinstance(value, Mapping):
-        raise WorkflowError(f"{where} must be a JSON object")
-    allowed = {"task", "kind", "risk", "priority", "parent_id", "base_ref"}
-    unknown = sorted(str(key) for key in value if key not in allowed)
-    if unknown:
-        raise WorkflowError(f"{where} has unknown fields: {', '.join(unknown)}")
-    task = value.get("task")
-    if not isinstance(task, str) or not task.strip():
-        raise WorkflowError(f"{where}.task must be a non-empty string")
-    try:
-        kind = TaskKind(value.get("kind", TaskKind.IMPLEMENT.value))
-        risk = Risk(value.get("risk", Risk.NORMAL.value))
-        priority = Priority(value.get("priority", Priority.NORMAL.value))
-    except ValueError as exc:
-        raise WorkflowError(f"{where}: {exc}") from None
-    parent_id = value.get("parent_id")
-    base_ref = value.get("base_ref")
-    if parent_id is not None and not isinstance(parent_id, str):
-        raise WorkflowError(f"{where}.parent_id must be a string or null")
-    if base_ref is not None and not isinstance(base_ref, str):
-        raise WorkflowError(f"{where}.base_ref must be a string or null")
-    return WorkflowTaskRequest(
-        task=task.strip(),
-        kind=kind,
-        risk=risk,
-        priority=priority,
-        parent_id=parent_id,
-        base_ref=base_ref,
-    )
-
-
-def _load_tasks_file(path: str, *, stdin: TextIO | None = None) -> tuple[WorkflowTaskRequest, ...]:
-    in_stream = stdin if stdin is not None else sys.stdin
-    if path == "-":
-        raw = in_stream.read()
-    else:
-        task_path = Path(path).expanduser()
-        if not task_path.exists():
-            raise WorkflowError(f"tasks file does not exist: {task_path}")
-        raw = task_path.read_text(encoding="utf-8")
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise WorkflowError(f"tasks file is not valid JSON: {exc}") from None
-    if not isinstance(payload, list):
-        raise WorkflowError("tasks file must contain a JSON array")
-    if not payload:
-        raise WorkflowError("a batch must contain at least one task")
-    return tuple(
-        _task_request_from_mapping(item, where=f"tasks[{index}]")
-        for index, item in enumerate(payload)
-    )
 
 
 def _workflow_summary(workflow: Workflow) -> dict[str, Any]:
@@ -547,9 +420,9 @@ def _print_stats(stats: Stats) -> None:
 
 def _handle_stats(store: TaskStore, args: argparse.Namespace) -> None:
     try:
-        engine = _parse_engine(args.engine) if args.engine else None
-        since = _parse_iso_datetime(args.since, "--since")
-        until = _parse_iso_datetime(args.until, "--until")
+        engine = parse_engine(args.engine)
+        since = parse_iso_datetime(args.since, "--since")
+        until = parse_iso_datetime(args.until, "--until")
         stats = build_stats(
             store.list_tasks(
                 engine=engine,
@@ -769,7 +642,7 @@ def _interactive_routes(
             prompt_output=prompt_output,
         ):
             continue
-        primary = _parse_engine(
+        primary = require_engine(
             _prompt(
                 f"Primary engine for {kind.value}",
                 default=table.routes[kind].engine.value,
@@ -799,7 +672,7 @@ def _interactive_routes(
             raise WorkflowError(
                 f"fallbacks for {kind.value} must be a non-empty engine list"
             )
-        chain = tuple(_parse_engine(item) for item in parts)
+        chain = tuple(require_engine(item) for item in parts)
         try:
             overrides[kind] = WorkflowRouteOverride(primary, FallbackMode.MANUAL, chain)
         except ValueError as exc:
@@ -816,7 +689,7 @@ def _interactive_batch_tasks(
         task = _prompt("Task", default="", stdin=stdin, prompt_output=prompt_output)
         if not task:
             break
-        kind = _parse_kind(
+        kind = parse_kind(
             _prompt(
                 "Kind",
                 default=TaskKind.IMPLEMENT.value,
@@ -909,7 +782,7 @@ def run_start_wizard(
 def _handle_run(config: Config, store: TaskStore, args: argparse.Namespace) -> None:
     try:
         if args.run_command == "create":
-            routes = _route_overrides_from_flags(args.route, args.fallback)
+            routes = route_overrides_from_flags(args.route, args.fallback)
             payload = _workflow_details_payload(
                 create_run(config, store, repo=args.repo, routes=routes)
             )
@@ -957,8 +830,8 @@ def _handle_run(config: Config, store: TaskStore, args: argparse.Namespace) -> N
 def _handle_batch(config: Config, store: TaskStore, args: argparse.Namespace) -> None:
     try:
         if args.batch_command == "dispatch":
-            routes = _route_overrides_from_flags(args.route, args.fallback)
-            requests = _load_tasks_file(args.tasks_file)
+            routes = route_overrides_from_flags(args.route, args.fallback)
+            requests = load_tasks_file(args.tasks_file)
             payload = _dispatched_batch_payload(
                 config,
                 store,
@@ -1027,7 +900,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     if args.command == "add":
         try:
-            engine = _parse_engine(args.engine) if args.engine else None
+            engine = parse_engine(args.engine)
         except WorkflowError as exc:
             raise SystemExit(str(exc)) from None
         task = store.add_task(
@@ -1057,7 +930,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 kind=TaskKind(args.kind),
                 risk=Risk(args.risk),
                 priority=Priority(args.priority),
-                engine=_parse_engine(args.engine) if args.engine else None,
+                engine=parse_engine(args.engine),
                 parent_id=args.parent,
                 base_ref=args.base_ref,
             )
