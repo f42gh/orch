@@ -3,11 +3,11 @@
 Claude Code is the orchestrator; this server is how it reaches the other engines.
 
 It deliberately does no work itself. `orch_dispatch` writes a row and spawns a detached
-`agentd run-task`, then returns immediately. That keeps three properties worth having:
+`orch daemon run-task`, then returns immediately. That keeps three properties worth having:
 
 - a tool call never blocks Claude for the 30 minutes a real task can take,
 - work survives the Claude session exiting, since the worker is not a child of it,
-- `agentctl`, the HTTP API and the React UI all see the same tasks, because SQLite
+- `orch`, the HTTP API and the React UI all see the same tasks, because SQLite
   stays the single source of truth.
 
 Nothing here may print to stdout: that is the MCP transport.
@@ -59,6 +59,7 @@ from agent_orchestrator.stats import build_stats
 from agent_orchestrator.usage import collect_usage
 from agent_orchestrator.views import (
     dispatched_batch,
+    dispatched_detail,
     dispatched_task,
     task_detail,
     workflow_details,
@@ -91,7 +92,7 @@ def wait_budget(timeout_s: float) -> float:
     return max(1.0, min(float(timeout_s), MAX_WAIT_S))
 
 
-# The validation itself lives in `parsing`, shared with `agentctl`, and raises
+# The validation itself lives in `parsing`, shared with `orch`, and raises
 # `WorkflowError`. These wrappers exist only to keep this server's outward error type
 # `DispatchError` — an MCP caller should not have to know which module rejected it.
 def _parse[T: Enum](enum: type[T], value: str | None, default: T | None = None) -> T | None:
@@ -215,12 +216,7 @@ def build_server(config: Config) -> MCPServer:
             parent_id=parent_id,
             base_ref=base_ref,
         )
-        return {
-            **task_detail(config, dispatched.task),
-            "branch": dispatched.branch,
-            "engine": dispatched.engine.value,
-            "worker_pid": dispatched.worker_pid,
-        }
+        return dispatched_detail(config, dispatched)
 
     @server.tool(
         description=(

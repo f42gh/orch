@@ -182,7 +182,9 @@ def test_start_rejects_non_tty_with_actionable_alternatives(
     config, store, _, _ = workflow_env
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
-    with pytest.raises(SystemExit, match="run create.*batch dispatch"):
+    with pytest.raises(
+        SystemExit, match=r"orch start requires an interactive TTY.*orch run create.*orch batch dispatch"
+    ):
         run_start_wizard(config, store)
 
 
@@ -192,7 +194,9 @@ def test_start_cli_rejects_non_tty_before_creating_runtime(
     runtime = tmp_path / "runtime"
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
 
-    with pytest.raises(SystemExit, match="run create.*batch dispatch"):
+    with pytest.raises(
+        SystemExit, match=r"orch start requires an interactive TTY.*orch run create"
+    ):
         main(["--runtime-root", str(runtime), "start"])
 
     assert not runtime.exists()

@@ -285,6 +285,7 @@ def test_orch_mounts_the_daemon_api_and_mcp_commands() -> None:
     assert daemon.daemon_command == "run"
     assert daemon.max_concurrency == 3
     assert parser.parse_args(["daemon", "run-task", "task-0001"]).task_id == "task-0001"
+    # No `run` subcommand: unlike daemon, api has one action, same as mcp.
     api = parser.parse_args(["api", "--port", "9000"])
     assert api.port == 9000 and api.host == "127.0.0.1"
     assert parser.parse_args(["mcp"]).routing is None

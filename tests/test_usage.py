@@ -297,7 +297,7 @@ def test_usage_command_lists_every_engine_and_flags_the_stale_reading(
     )
     monkeypatch.setattr(
         "sys.argv",
-        ["agentctl", "--runtime-root", str(tmp_path / "runtime"), "usage"],
+        ["orch", "--runtime-root", str(tmp_path / "runtime"), "usage"],
     )
 
     main()
@@ -326,7 +326,7 @@ def test_usage_command_does_not_create_the_runtime_database(
     monkeypatch.setattr(
         "agent_orchestrator.cli.collect_usage", lambda: _fixture_report(tmp_path)
     )
-    monkeypatch.setattr("sys.argv", ["agentctl", "--runtime-root", str(runtime), "usage", "--json"])
+    monkeypatch.setattr("sys.argv", ["orch", "--runtime-root", str(runtime), "usage", "--json"])
 
     main()
 

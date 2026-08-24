@@ -30,9 +30,8 @@ dev = [
 
 [project.scripts]
 orch = "agent_orchestrator.cli:main"
-# Aliases. `agentctl` is load-bearing: CAGE builds the path <checkout>/.venv/bin/agentctl
-# itself, and `agentmcp` is what existing `claude mcp add` registrations invoke. The
-# other two are kept so documented commands from earlier versions keep working.
+# Aliases. `agentmcp` is what existing `claude mcp add` registrations invoke.
+# The rest keep documented commands from earlier versions working.
 agentctl = "agent_orchestrator.cli:main"
 agentd = "agent_orchestrator.daemon:main"
 agentapi = "agent_orchestrator.api:main"

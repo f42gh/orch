@@ -1,7 +1,7 @@
 """The one dispatch path: write the task row, then start its detached worker.
 
-`orch_dispatch` (MCP) and `agentctl dispatch` (what CAGE calls) both go through
-`dispatch_task`, so queueing and spawning cannot drift apart between entry points.
+`orch_dispatch` (MCP) and `orch dispatch` both go through `dispatch_task`, so
+queueing and spawning cannot drift apart between entry points.
 """
 
 from __future__ import annotations
@@ -34,21 +34,6 @@ class Dispatched:
     branch: str
     engine: Engine
     worker_pid: int | None
-
-    def describe(self, config: Config) -> dict[str, object]:
-        return {
-            "task_id": self.task.id,
-            "status": self.task.status.value,
-            "kind": self.task.kind.value,
-            "engine": self.engine.value,
-            "risk": self.task.risk.value,
-            "repo": str(self.task.repo_path),
-            "branch": self.branch,
-            "parent_id": self.task.parent_id,
-            "created_at": self.task.created_at.isoformat(),
-            "log_path": str(config.logs_dir / self.task.id),
-            "worker_pid": self.worker_pid,
-        }
 
 
 def pid_path(config: Config, task_id: str) -> Path:
@@ -134,7 +119,7 @@ def _package_root() -> str:
 def existing_repo(repo: str | Path) -> Path:
     """The repo check every entry point that queues a task has to make.
 
-    `agentctl add` used to skip it and store `--repo` verbatim, so a typo or an
+    `orch add` used to skip it and store `--repo` verbatim, so a typo or an
     unexpanded `~` became a queued task that only failed later, in a detached worker,
     where nobody was watching.
     """

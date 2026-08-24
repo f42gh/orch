@@ -1,14 +1,10 @@
-"""The JSON shapes `agentctl --json` and the MCP tools both return.
+"""The JSON shapes `orch --json` and the MCP tools both return.
 
 These used to exist twice, once in `cli.py` and once in `mcp_server.py`, several of
 them byte-identical. The one place they had genuinely diverged was the task inside a
 workflow: the CLI returned eleven fields, the MCP server returned everything. That
 difference was not a decision — a caller reading `run show --json` had no way to see
 cost, tokens or timings that the same workflow reported over MCP.
-
-`Dispatched.describe` stays in `dispatch.py` and is deliberately not merged into
-`task_detail`: it is the payload CAGE parses out of `agentctl dispatch --json`, into a
-struct whose fields are all required.
 """
 
 from __future__ import annotations
@@ -17,6 +13,7 @@ from typing import Any
 
 from agent_orchestrator.config import Config
 from agent_orchestrator.db import TaskStore
+from agent_orchestrator.dispatch import Dispatched
 from agent_orchestrator.models import Task, Workflow, WorkflowDetails
 from agent_orchestrator.stats import summarize
 from agent_orchestrator.workflows import (
@@ -110,12 +107,21 @@ def workflow_details(config: Config, details: WorkflowDetails) -> dict[str, Any]
     }
 
 
+def dispatched_detail(config: Config, dispatched: Dispatched) -> dict[str, Any]:
+    """A just-launched task: the usual row, plus the worker that is now running it."""
+    return {
+        **task_detail(config, dispatched.task),
+        "branch": dispatched.branch,
+        "engine": dispatched.engine.value,
+        "worker_pid": dispatched.worker_pid,
+    }
+
+
 def dispatched_task(config: Config, item: DispatchedWorkflowTask) -> dict[str, Any]:
     return {
-        **item.dispatched.describe(config),
+        **dispatched_detail(config, item.dispatched),
         "workflow_id": item.workflow.id,
         "ordinal": item.membership.ordinal,
-        "task": item.task.task,
         "spawn_error": item.spawn_error,
     }
 

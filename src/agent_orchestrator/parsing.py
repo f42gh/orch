@@ -1,6 +1,6 @@
 """Turning caller-supplied strings into the enums and requests the core expects.
 
-Both entry points take the same values from an untrusted caller — `agentctl` from
+Both entry points take the same values from an untrusted caller — `orch` from
 argv and a tasks file, `mcp_server` from a JSON tool call — and both used to validate
 them with their own copy of these rules. The copies had already drifted apart in their
 wording, which meant the same bad input was reported two different ways depending on

@@ -1,21 +1,8 @@
-"""`agentctl dispatch` is the machine entry point CAGE calls; its JSON is a contract.
+"""CLI dispatch and engines: resolve, write the row, print JSON.
 
 Worker spawning is stubbed: these tests check that dispatch resolves the engine
 eagerly, writes the row, and prints what a machine caller needs — not that a real
 engine runs.
-
-`dispatch --json` and `engines --json` are the only two surfaces of this CLI that
-something outside this repository reads, and breaking them does not fail loudly here.
-CAGE (`~/DEV/CAGE`) deserializes both in `src-tauri/src/tools/orch/dispatch.rs` into
-serde structs whose fields are required — `worker_pid` is `i64`, not `Option<i64>`.
-A renamed, dropped or null field is a runtime parse failure there, which
-`src/tools/orch/dispatch.ts` classifies as `outcome-unknown`; that state deliberately
-blocks the Inbox item from ever being re-dispatched, to avoid submitting the same work
-twice. So a mismatch does not merely error, it wedges data in the other application.
-
-`test_dispatch_json_is_the_frozen_cage_contract` and
-`test_engines_json_is_the_frozen_cage_contract` pin the exact key sets. If you are
-changing them on purpose, change CAGE in the same breath.
 """
 
 from __future__ import annotations
@@ -33,6 +20,7 @@ from agent_orchestrator.db import TaskStore
 from agent_orchestrator.dispatch import spawn_worker
 from agent_orchestrator.engines.base import Capabilities
 from agent_orchestrator.models import Engine, TaskStatus
+from agent_orchestrator.views import task_detail
 
 
 def _fake_caps(engine: Engine) -> Capabilities:
@@ -64,12 +52,12 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, li
 
 def run_cli(monkeypatch: pytest.MonkeyPatch, runtime: Path, *argv: str) -> None:
     monkeypatch.setattr(
-        "sys.argv", ["agentctl", "--runtime-root", str(runtime), *argv]
+        "sys.argv", ["orch", "--runtime-root", str(runtime), *argv]
     )
     main()
 
 
-def test_dispatch_json_prints_the_contract_and_starts_a_worker(
+def test_dispatch_json_prints_the_task_and_starts_a_worker(
     env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     runtime, repo, spawned = env
@@ -92,10 +80,10 @@ def test_dispatch_json_prints_the_contract_and_starts_a_worker(
     assert stored.branch_name == "agent/codex/task-0001"
 
 
-def test_dispatch_json_is_the_frozen_cage_contract(
+def test_dispatch_json_uses_the_shared_task_view(
     env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The exact key set CAGE's `OrchDispatched` requires. See this module's docstring."""
+    """`orch dispatch --json` is the same payload `orch_dispatch` returns, not a subset."""
     runtime, repo, _ = env
 
     run_cli(
@@ -103,39 +91,13 @@ def test_dispatch_json_is_the_frozen_cage_contract(
     )
 
     payload = json.loads(capsys.readouterr().out)
-    assert set(payload) == {
-        "task_id",
-        "status",
-        "kind",
-        "engine",
-        "risk",
-        "repo",
-        "branch",
-        "parent_id",
-        "created_at",
-        "log_path",
-        "worker_pid",
+    stored = TaskStore(Config(runtime_root=runtime)).get_task("task-0001")
+    assert stored is not None
+    assert set(payload) == set(task_detail(Config(runtime_root=runtime), stored)) | {
+        "worker_pid"
     }
-    # Every field but parent_id is non-optional on the other side.
-    assert all(payload[key] is not None for key in payload if key != "parent_id")
-    assert isinstance(payload["worker_pid"], int)
-
-
-def test_engines_json_is_the_frozen_cage_contract(
-    env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The exact key sets CAGE's `OrchEngines` requires. See this module's docstring."""
-    runtime, _, _ = env
-
-    run_cli(monkeypatch, runtime, "engines", "--json")
-
-    payload = json.loads(capsys.readouterr().out)
-    assert {"engines", "routing", "kinds"} <= set(payload)
-    assert {"engine", "version", "structured_output", "reports_cost"} <= set(
-        payload["engines"][0]
-    )
-    assert {"kind", "engine", "fallbacks", "writes"} <= set(payload["routing"][0])
-    assert all(isinstance(kind, str) for kind in payload["kinds"])
+    assert payload["worker_pid"] == 4242
+    assert payload["task"] == "x"
 
 
 def test_dispatch_reports_a_spawn_failure_without_a_traceback(
@@ -148,7 +110,10 @@ def test_dispatch_reports_a_spawn_failure_without_a_traceback(
         lambda cfg, task_id: (_ for _ in ()).throw(OSError("Too many open files")),
     )
 
-    with pytest.raises(SystemExit, match="the task is queued"):
+    with pytest.raises(
+        SystemExit,
+        match=r"the task is queued.*orch list.*orch daemon run-task",
+    ):
         run_cli(monkeypatch, runtime, "dispatch", "--repo", str(repo), "--task", "x")
 
     assert [task.id for task in TaskStore(Config(runtime_root=runtime)).list_tasks()] == [

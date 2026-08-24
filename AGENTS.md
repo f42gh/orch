@@ -47,21 +47,20 @@ orch engines                       # what this machine has, and the routing tabl
 orch usage                         # each engine's account quota and its reset
 orch install-claude-command
 orch add --repo <path> --task "..." --kind implement
-orch dispatch --repo <path> --task "..." --json   # add + start; the JSON is CAGE's contract
+orch dispatch --repo <path> --task "..." --json   # add + start
 orch run create --repo <path> --route implement=codex
 orch run dispatch run-0001 --task "..." --kind implement
 orch batch dispatch --repo <path> --route implement=codex --tasks-file tasks.json
 orch stats --group-by engine       # cost, tokens, engine time, diff size
 orch daemon run-task <id>          # run one task
 orch daemon run --max-concurrency 2
-orch api run                       # local HTTP API on 127.0.0.1:8765
+orch api                           # local HTTP API on 127.0.0.1:8765
 orch mcp                           # MCP server over stdio
 ```
 
 `orch` is the whole surface. `agentctl`, `agentd`, `agentapi` and `agentmcp` remain as
-aliases: `agentctl` because CAGE builds the path `<checkout>/.venv/bin/agentctl` itself,
-`agentmcp` because existing `claude mcp add` registrations invoke it by name. Do not
-remove either. New code and new docs use `orch`.
+aliases: `agentmcp` because existing `claude mcp add` registrations invoke it by name;
+the rest keep older documented commands working. New code and new docs use `orch`.
 
 Run `uv run pytest` before submitting changes.
 
@@ -89,16 +88,6 @@ These are load-bearing. Changing one is a deliberate decision, not a refactor.
 - Nothing commits or pushes. Engines are told not to, deny rules block it, and
   `secrets_scan.py` looks for attempts afterwards.
 - Every engine is spawned with stdin closed and an explicit working directory.
-- `dispatch --json` and `engines --json` are frozen, and so is the `agentctl` name
-  they are reached by. CAGE
-  (`~/DEV/CAGE`) builds that argv and deserializes those payloads in
-  `src-tauri/src/tools/orch/dispatch.rs`, into serde structs whose fields are required —
-  `worker_pid` is `i64`, not `Option<i64>`. A renamed, dropped or null field is a
-  runtime parse failure there, which `src/tools/orch/dispatch.ts` treats as
-  `outcome-unknown` and uses to block that Inbox item from ever being re-dispatched. So
-  breaking these does not merely error, it wedges data in the other application. Change
-  them only alongside CAGE; `tests/test_cli_dispatch.py` pins both key sets. Every other
-  command's output is free to change.
 - Workflow routes choose the engine only. They must never change the access, prompt,
   schema, risk policy or dangerous-access opt-in derived for the task.
 - A manual workflow fallback list is strict and exhaustive. Automatic fallback is used

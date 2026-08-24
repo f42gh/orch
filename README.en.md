@@ -67,7 +67,7 @@ Everything is under the one `orch` command:
 | `orch run` / `batch` / `start` | Run and Batch workflows |
 | `orch stats` / `usage` / `engines` | aggregates and what this machine has |
 | `orch daemon run` | the worker that drains the queue |
-| `orch api run` | local HTTP API for the UI |
+| `orch api` | local HTTP API for the UI |
 | `orch mcp` | MCP server over stdio |
 
 The older `agentctl`, `agentd`, `agentapi` and `agentmcp` names remain as aliases, so
@@ -197,7 +197,7 @@ The original single-task commands remain supported:
 orch add --repo ~/dev/my-project --task "READMEのセットアップ手順を最新化して"
 orch add --repo ~/dev/my-project --task "calc.py をレビューして" --kind review --risk read_only
 orch dispatch --repo ~/dev/my-project --task "review the parser" --kind review --engine codex
-orch dispatch --repo ~/dev/my-project --task "..." --json  # add + start in one shot; what CAGE calls
+orch dispatch --repo ~/dev/my-project --task "..." --json  # add + start in one shot
 
 orch daemon run-task task-0001      # run one
 orch daemon run --max-concurrency 2 # drain the queue
@@ -353,7 +353,7 @@ workflow orchestration.
 
 ```bash
 uv sync --extra api
-orch api run            # 127.0.0.1:8765
+orch api                # 127.0.0.1:8765
 cd ui && deno task dev
 ```
 

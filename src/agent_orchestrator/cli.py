@@ -46,6 +46,7 @@ from agent_orchestrator.stats import Stats, Totals, build_stats
 from agent_orchestrator.usage import UsageReport, collect_usage
 from agent_orchestrator.views import (
     dispatched_batch,
+    dispatched_detail,
     dispatched_task,
     task_detail,
     workflow_details,
@@ -70,7 +71,7 @@ class Context:
     the runtime directories and the SQLite schema as a side effect, and two commands
     answer without a database at all: `usage` reads files the engines wrote, and
     `start` refuses a non-TTY before anything exists. Making the store lazy is what
-    keeps `agentctl usage` from conjuring a runtime root — it used to depend on those
+    keeps `orch usage` from conjuring a runtime root — it used to depend on those
     two commands returning early, before the line that built the store.
     """
 
@@ -84,7 +85,7 @@ class Context:
         return self._store
 
 
-#: Shown under `agentctl --help`. The route syntax is the one thing a reader cannot
+#: Shown under `orch --help`. The route syntax is the one thing a reader cannot
 #: guess from a metavar, and until now it only appeared in the README.
 EPILOG = """examples:
   orch engines                        what this machine has, and how kinds route
@@ -179,10 +180,10 @@ def _add_route_arguments(parser: argparse.ArgumentParser) -> None:
 def _runtime_root_parent() -> argparse.ArgumentParser:
     """`--runtime-root` after the subcommand as well as before it.
 
-    `agentd` and `agentapi` take it after their subcommand, so `agentctl` accepting it
+    `agentd` and `agentapi` take it after their subcommand, so `orch` accepting it
     only before one was a difference nobody chose. The default is SUPPRESS rather than
     None: an argparse subparser writes its defaults over values the main parser already
-    set, so a plain default here would erase `agentctl --runtime-root X list`.
+    set, so a plain default here would erase `orch --runtime-root X list`.
     """
     parent = argparse.ArgumentParser(add_help=False)
     parent.add_argument(
@@ -353,6 +354,9 @@ def build_parser() -> argparse.ArgumentParser:
     # modules that implement them: those modules import fastapi and mcp at the top, and
     # both are optional extras. Sharing the definitions would make `orch --help` fail on
     # an install that only wanted the CLI. The handlers import lazily for the same reason.
+    # No `run` subcommand: unlike daemon, api has one action, same as mcp. The
+    # standalone `agentapi run` alias keeps `run` because that binary's whole
+    # surface is the server.
     api_parser = add("api", "serve the local HTTP API the React UI reads")
     api_parser.set_defaults(func=_handle_api)
     api_parser.add_argument(
@@ -919,8 +923,8 @@ def run_start_wizard(
     prompts = prompt_output if prompt_output is not None else sys.stderr
     if stdin is None and not sys.stdin.isatty():
         raise SystemExit(
-            "agentctl start requires an interactive TTY; use 'agentctl run create' or "
-            "'agentctl batch dispatch --tasks-file PATH' for non-interactive use"
+            "orch start requires an interactive TTY; use 'orch run create' or "
+            "'orch batch dispatch --tasks-file PATH' for non-interactive use"
         )
     task_store = store or TaskStore(config)
     try:
@@ -1107,10 +1111,10 @@ def _handle_dispatch(args: argparse.Namespace, ctx: Context) -> None:
         # who reads this as "nothing happened" and retries ends up with two tasks.
         raise SystemExit(
             f"could not start the worker: {exc}; the task is queued — find its id with "
-            "'agentctl list' and start it with 'agentd run-task <id>'"
+            "'orch list' and start it with 'orch daemon run-task <id>'"
         ) from None
     if args.json:
-        print(json.dumps(dispatched.describe(ctx.config), ensure_ascii=False))
+        _print_json(dispatched_detail(ctx.config, dispatched))
     else:
         print(f"dispatched {dispatched.task.id}")
         print(f"engine: {dispatched.engine.value}")

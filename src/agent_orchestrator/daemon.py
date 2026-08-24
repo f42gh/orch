@@ -106,7 +106,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     """Populate a parser with the daemon's own commands.
 
     Mounted twice: as `orch daemon` and as the whole of `agentd`. Defined once so the
-    two cannot drift — an earlier `agentctl daemon` was a hand-copied second version of
+    two cannot drift — an earlier `orch daemon` was a hand-copied second version of
     this and had already lost track of DEFAULT_CONCURRENCY.
     """
     subparsers = parser.add_subparsers(dest="daemon_command", required=True)

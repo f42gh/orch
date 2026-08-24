@@ -15,7 +15,7 @@ From the repository root:
 
 ```bash
 uv sync --extra api
-orch api run
+orch api
 ```
 
 In another terminal:

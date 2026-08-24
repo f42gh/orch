@@ -64,7 +64,7 @@ orch engines                 # このマシンにあるエンジンとルーテ�
 | `orch run` / `batch` / `start` | Run・Batch ワークフロー |
 | `orch stats` / `usage` / `engines` | 集計と環境確認 |
 | `orch daemon run` | キューを消化するワーカー |
-| `orch api run` | ローカル HTTP API（UI 用） |
+| `orch api` | ローカル HTTP API（UI 用） |
 | `orch mcp` | MCP サーバー（stdio） |
 
 旧名の `agentctl` / `agentd` / `agentapi` / `agentmcp` もエイリアスとして残っているため、
@@ -184,7 +184,7 @@ orch batch list
 orch add --repo ~/dev/my-project --task "READMEのセットアップ手順を最新化して"
 orch add --repo ~/dev/my-project --task "calc.py をレビューして" --kind review --risk read_only
 orch dispatch --repo ~/dev/my-project --task "パーサーをレビューして" --kind review --engine codex
-orch dispatch --repo ~/dev/my-project --task "..." --json  # add と開始を一発で。CAGE が呼ぶのはこれ
+orch dispatch --repo ~/dev/my-project --task "..." --json  # add と開始を一発で
 
 orch daemon run-task task-0001      # 1 件実行
 orch daemon run --max-concurrency 2 # キューを消化
@@ -335,7 +335,7 @@ MCP ツールまたは `orch` を使う。
 
 ```bash
 uv sync --extra api
-orch api run            # 127.0.0.1:8765
+orch api                # 127.0.0.1:8765
 cd ui && deno task dev
 ```
 
