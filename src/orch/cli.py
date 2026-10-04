@@ -787,7 +787,7 @@ def _prompt_yes_no(
 ) -> bool:
     raw = _prompt(
         f"{label} ({'Y/n' if default else 'y/N'})",
-        default="",
+        default=None,
         stdin=stdin,
         prompt_output=prompt_output,
     ).lower()
