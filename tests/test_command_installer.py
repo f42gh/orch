@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_orchestrator.command_installer import (
+from orch.command_installer import (
     CommandInstallError,
     command_template,
     default_command_path,
@@ -101,7 +101,7 @@ def test_failed_atomic_replace_leaves_original_and_backup(
     def fail_replace(source: str | Path, destination: str | Path) -> None:
         raise OSError("replace failed")
 
-    monkeypatch.setattr("agent_orchestrator.command_installer.os.replace", fail_replace)
+    monkeypatch.setattr("orch.command_installer.os.replace", fail_replace)
 
     with pytest.raises(OSError, match="replace failed"):
         install_command(target, force=True)
@@ -124,7 +124,7 @@ def test_install_replaces_from_a_temporary_file_in_the_same_directory(
         replacements.append((Path(source), Path(destination)))
         original_replace(source, destination)
 
-    monkeypatch.setattr("agent_orchestrator.command_installer.os.replace", record_replace)
+    monkeypatch.setattr("orch.command_installer.os.replace", record_replace)
 
     install_command(target)
 

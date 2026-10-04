@@ -9,12 +9,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from agent_orchestrator.config import Config, load_config
-from agent_orchestrator.daemon import process_one
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.engines import probe_all
-from agent_orchestrator.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus
-from agent_orchestrator.router import load_routing_table
+from orch.config import Config, load_config
+from orch.daemon import process_one
+from orch.db import TaskStore
+from orch.engines import probe_all
+from orch.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus
+from orch.router import load_routing_table
 
 
 LogKind = Literal["agent", "stdout", "stderr"]

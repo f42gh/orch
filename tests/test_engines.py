@@ -12,13 +12,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_orchestrator.engines.antigravity import AntigravityAdapter
-from agent_orchestrator.engines.base import Capabilities, RunSpec
-from agent_orchestrator.engines.claude import ClaudeAdapter
-from agent_orchestrator.engines.codex import CodexAdapter
-from agent_orchestrator.engines.grok import GrokAdapter
-from agent_orchestrator.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus, TokenUsage
-from agent_orchestrator.router import AccessLevel, EnginePolicy
+from orch.engines.antigravity import AntigravityAdapter
+from orch.engines.base import Capabilities, RunSpec
+from orch.engines.claude import ClaudeAdapter
+from orch.engines.codex import CodexAdapter
+from orch.engines.grok import GrokAdapter
+from orch.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus, TokenUsage
+from orch.router import AccessLevel, EnginePolicy
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

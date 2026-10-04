@@ -3,8 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from agent_orchestrator.config import Config, ensure_runtime_dirs
-from agent_orchestrator.models import Engine
+from orch.config import Config, ensure_runtime_dirs
+from orch.models import Engine
 
 
 class WorkspaceError(RuntimeError):

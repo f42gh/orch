@@ -3,13 +3,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from agent_orchestrator.config import Config, load_config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.engines import available_engines
-from agent_orchestrator.models import Task, TaskStatus
-from agent_orchestrator.router import RoutingError, load_routing_table, resolve_engine
-from agent_orchestrator.workspace import WorkspaceError, create_workspace
-from agent_orchestrator.worker import run_task
+from orch.config import Config, load_config
+from orch.db import TaskStore
+from orch.engines import available_engines
+from orch.models import Task, TaskStatus
+from orch.router import RoutingError, load_routing_table, resolve_engine
+from orch.workspace import WorkspaceError, create_workspace
+from orch.worker import run_task
 
 DEFAULT_CONCURRENCY = 2
 

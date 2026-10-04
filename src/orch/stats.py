@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, TypeVar
 
-from agent_orchestrator.models import Engine, TERMINAL_STATUSES, Task, TaskStatus, TokenUsage
+from orch.models import Engine, TERMINAL_STATUSES, Task, TaskStatus, TokenUsage
 
 
 _Number = TypeVar("_Number", int, float)

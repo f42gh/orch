@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_orchestrator.cli import (
+from orch.cli import (
     _interactive_routes,
     _print_workflow,
     _print_workflow_dispatch,
@@ -17,14 +17,14 @@ from agent_orchestrator.cli import (
     main,
     run_start_wizard,
 )
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.dispatch import DispatchError
-from agent_orchestrator.engines.base import Capabilities
-from agent_orchestrator.mcp_server import build_server
-from agent_orchestrator.models import Engine, FallbackMode, TaskKind, TaskStatus
-from agent_orchestrator.parsing import load_tasks_file, route_overrides_from_flags
-from agent_orchestrator.workflows import WorkflowError
+from orch.config import Config
+from orch.db import TaskStore
+from orch.dispatch import DispatchError
+from orch.engines.base import Capabilities
+from orch.mcp_server import build_server
+from orch.models import Engine, FallbackMode, TaskKind, TaskStatus
+from orch.parsing import load_tasks_file, route_overrides_from_flags
+from orch.workflows import WorkflowError
 
 
 def tool(server, name: str):
@@ -54,11 +54,11 @@ def workflow_env(
     store = TaskStore(config)
     spawned: list[str] = []
     monkeypatch.setattr(
-        "agent_orchestrator.workflows.probe_all",
+        "orch.workflows.probe_all",
         lambda refresh=False: {engine: _capability(engine) for engine in Engine},
     )
     monkeypatch.setattr(
-        "agent_orchestrator.workflows.spawn_worker",
+        "orch.workflows.spawn_worker",
         lambda cfg, task_id: (spawned.append(task_id), 4000 + len(spawned))[1],
     )
     return config, store, repo, spawned
@@ -266,7 +266,7 @@ def test_cli_stats_json_is_parseable_and_accepts_agy_alias(
     config, store, repo, _ = workflow_env
     task = store.add_task(repo, "work", engine=Engine.ANTIGRAVITY)
     store.set_status(task.id, TaskStatus.NEEDS_REVIEW)
-    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+    monkeypatch.setattr("orch.cli.load_config", lambda _root=None: config)
 
     main(["stats", "--engine", "agy", "--group-by", "engine", "--json"])
     payload = json.loads(capsys.readouterr().out)
@@ -281,7 +281,7 @@ def test_cli_stats_rejects_a_bad_iso_datetime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config, _, _, _ = workflow_env
-    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+    monkeypatch.setattr("orch.cli.load_config", lambda _root=None: config)
 
     with pytest.raises(SystemExit, match="invalid --since datetime.*ISO 8601"):
         main(["stats", "--since", "not-a-date"])
@@ -295,7 +295,7 @@ def test_cli_stats_human_output_marks_partial_cost_and_uses_seconds(
     config, store, repo, _ = workflow_env
     task = store.add_task(repo, "work", engine=Engine.CODEX)
     store.update_task(task.id, status=TaskStatus.NEEDS_REVIEW, engine_ms=1_500)
-    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+    monkeypatch.setattr("orch.cli.load_config", lambda _root=None: config)
 
     main(["stats"])
     output = capsys.readouterr().out
@@ -329,7 +329,7 @@ def test_cli_stats_human_output_renders_quota_windows(
         quota_used_pct=8.0,
         quota_window_minutes=300,
     )
-    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+    monkeypatch.setattr("orch.cli.load_config", lambda _root=None: config)
 
     main(["stats"])
     output = capsys.readouterr().out
@@ -385,7 +385,7 @@ def test_cli_run_lifecycle_uses_public_json_contract(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config, _, repo, _ = workflow_env
-    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+    monkeypatch.setattr("orch.cli.load_config", lambda _root=None: config)
 
     main(
         [
@@ -464,7 +464,7 @@ def test_mcp_batch_reports_partial_spawn_failure_and_keeps_order(
             raise OSError("cannot spawn")
         return 5000 + len(spawned)
 
-    monkeypatch.setattr("agent_orchestrator.workflows.spawn_worker", spawn_worker)
+    monkeypatch.setattr("orch.workflows.spawn_worker", spawn_worker)
     batch = tool(build_server(config), "orch_batch_dispatch")(
         repo=str(repo),
         tasks=[{"task": "one"}, {"task": "two"}, {"task": "three"}],
@@ -498,8 +498,8 @@ def test_cli_batch_reports_partial_spawn_failure_and_keeps_json_contract(
             raise OSError("cannot spawn")
         return 6000 + len(spawned)
 
-    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
-    monkeypatch.setattr("agent_orchestrator.workflows.spawn_worker", spawn_worker)
+    monkeypatch.setattr("orch.cli.load_config", lambda _root=None: config)
+    monkeypatch.setattr("orch.workflows.spawn_worker", spawn_worker)
     main(
         [
             "batch",
@@ -579,10 +579,10 @@ def test_legacy_cli_and_mcp_accept_agy_but_serialize_canonical_name(
 ) -> None:
     config, _, repo, _ = workflow_env
     monkeypatch.setattr(
-        "agent_orchestrator.dispatch.probe_all",
+        "orch.dispatch.probe_all",
         lambda refresh=False: {engine: _capability(engine) for engine in Engine},
     )
-    monkeypatch.setattr("agent_orchestrator.dispatch.spawn_worker", lambda cfg, task_id: 4242)
+    monkeypatch.setattr("orch.dispatch.spawn_worker", lambda cfg, task_id: 4242)
 
     main(
         [
@@ -623,7 +623,7 @@ def test_cli_batch_list_and_show_round_trip_through_main(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config, _, repo, _ = workflow_env
-    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+    monkeypatch.setattr("orch.cli.load_config", lambda _root=None: config)
     tasks_path = repo.parent / "tasks.json"
     tasks_path.write_text(json.dumps([{"task": "one"}, {"task": "two"}]), encoding="utf-8")
     main(["batch", "dispatch", "--repo", str(repo), "--tasks-file", str(tasks_path), "--json"])
@@ -646,7 +646,7 @@ def test_cli_run_and_batch_refuse_each_others_ids(
 ) -> None:
     """`run show batch-0001` must say what is wrong, not print a batch as a run."""
     config, _, repo, _ = workflow_env
-    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+    monkeypatch.setattr("orch.cli.load_config", lambda _root=None: config)
     main(["run", "create", "--repo", str(repo), "--json"])
     run_id = json.loads(capsys.readouterr().out)["workflow_id"]
     tasks_path = repo.parent / "tasks.json"
@@ -665,7 +665,7 @@ def test_cli_workflow_human_output_goes_through_main(
 ) -> None:
     """The non-JSON paths were only ever tested by calling the printers directly."""
     config, _, repo, _ = workflow_env
-    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+    monkeypatch.setattr("orch.cli.load_config", lambda _root=None: config)
 
     main(["run", "create", "--repo", str(repo), "--route", "implement=codex"])
     created = capsys.readouterr().out
@@ -695,7 +695,7 @@ def test_cli_stats_filters_narrow_the_task_set(
     workflow_env, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     config, _, repo, _ = workflow_env
-    monkeypatch.setattr("agent_orchestrator.cli.load_config", lambda _root=None: config)
+    monkeypatch.setattr("orch.cli.load_config", lambda _root=None: config)
     main(["run", "create", "--repo", str(repo), "--json"])
     run_id = json.loads(capsys.readouterr().out)["workflow_id"]
     main(["run", "dispatch", run_id, "--task", "inside the run", "--json"])

@@ -11,19 +11,19 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 
-from agent_orchestrator import __version__
-from agent_orchestrator.command_installer import (
+from orch import __version__
+from orch.command_installer import (
     SUPPORTED_COMMAND_LOCALES,
     CommandInstallError,
     install_command,
 )
-from agent_orchestrator.config import Config, load_config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.daemon import add_arguments as add_daemon_arguments
-from agent_orchestrator.daemon import run as run_daemon_command
-from agent_orchestrator.dispatch import DispatchError, dispatch_task, existing_repo
-from agent_orchestrator.engines import probe_all
-from agent_orchestrator.models import (
+from orch.config import Config, load_config
+from orch.db import TaskStore
+from orch.daemon import add_arguments as add_daemon_arguments
+from orch.daemon import run as run_daemon_command
+from orch.dispatch import DispatchError, dispatch_task, existing_repo
+from orch.engines import probe_all
+from orch.models import (
     Engine,
     FallbackMode,
     Priority,
@@ -33,7 +33,7 @@ from agent_orchestrator.models import (
     WorkflowTaskRequest,
     WorkflowType,
 )
-from agent_orchestrator.parsing import (
+from orch.parsing import (
     load_tasks_file,
     parse_engine,
     parse_iso_datetime,
@@ -41,10 +41,10 @@ from agent_orchestrator.parsing import (
     require_engine,
     route_overrides_from_flags,
 )
-from agent_orchestrator.router import load_routing_table
-from agent_orchestrator.stats import Stats, Totals, build_stats
-from agent_orchestrator.usage import UsageReport, collect_usage
-from agent_orchestrator.views import (
+from orch.router import load_routing_table
+from orch.stats import Stats, Totals, build_stats
+from orch.usage import UsageReport, collect_usage
+from orch.views import (
     dispatched_batch,
     dispatched_detail,
     dispatched_task,
@@ -52,7 +52,7 @@ from agent_orchestrator.views import (
     workflow_details,
     workflow_summary,
 )
-from agent_orchestrator.workflows import (
+from orch.workflows import (
     WorkflowError,
     close_workflow,
     create_run,
@@ -1227,14 +1227,14 @@ def _handle_daemon(args: argparse.Namespace, ctx: Context) -> None:
 
 
 def _handle_api(args: argparse.Namespace, ctx: Context) -> None:
-    from agent_orchestrator import api
+    from orch import api
 
     api.run(args)
 
 
 def _handle_mcp(args: argparse.Namespace, ctx: Context) -> None:
     # Nothing may print to stdout past this point: it is the MCP transport.
-    from agent_orchestrator import mcp_server
+    from orch import mcp_server
 
     mcp_server.serve(args.runtime_root, args.routing)
 

@@ -20,7 +20,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TextIO
 
-from agent_orchestrator.models import (
+from orch.models import (
     Engine,
     FallbackMode,
     Priority,
@@ -29,7 +29,7 @@ from agent_orchestrator.models import (
     WorkflowRouteOverride,
     WorkflowTaskRequest,
 )
-from agent_orchestrator.workflows import WorkflowError
+from orch.workflows import WorkflowError
 
 
 #: `agy` is what the Antigravity CLI is called on disk; the enum keeps the long name.

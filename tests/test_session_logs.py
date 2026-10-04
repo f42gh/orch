@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_orchestrator.session_logs import CodexSessionInfo, read_codex_session
+from orch.session_logs import CodexSessionInfo, read_codex_session
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "codex_rollout.jsonl"

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from agent_orchestrator.config import Config
+from orch.config import Config
 
 
 def task_log_dir(config: Config, task_id: str) -> Path:

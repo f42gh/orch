@@ -55,7 +55,7 @@ cat <<-EOF
 ==== MCP / Copilot registration ====
 Recommended command to register this MCP server with the Copilot/claude CLI:
 
-  claude mcp add orch -s user -- $ABS_PY -m agent_orchestrator.mcp_server
+  claude mcp add orch -s user -- $ABS_PY -m orch.mcp_server
 
 Alternative (if using the repo's "uv" runner):
 
@@ -63,7 +63,7 @@ Alternative (if using the repo's "uv" runner):
 
 To start the server locally for testing use:
 
-  $ABS_PY -m agent_orchestrator.mcp_server
+  $ABS_PY -m orch.mcp_server
 
 If the 'claude' CLI is available and you want this script to auto-register the MCP server,
 re-run it with REGISTER=1 in the environment (e.g. REGISTER=1 ./setup-mcp-local.sh).
@@ -81,6 +81,6 @@ if ! command -v claude >/dev/null 2>&1; then
 fi
 
 echo "Registering MCP server with claude..."
-claude mcp add orch -s user -- $ABS_PY -m agent_orchestrator.mcp_server
+claude mcp add orch -s user -- $ABS_PY -m orch.mcp_server
 
 echo "Registered. Verify with: claude mcp list"

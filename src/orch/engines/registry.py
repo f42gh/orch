@@ -6,12 +6,12 @@ dispatch, and each probe spawns two subprocesses.
 
 from __future__ import annotations
 
-from agent_orchestrator.engines.antigravity import AntigravityAdapter
-from agent_orchestrator.engines.base import Capabilities, EngineAdapter
-from agent_orchestrator.engines.claude import ClaudeAdapter
-from agent_orchestrator.engines.codex import CodexAdapter
-from agent_orchestrator.engines.grok import GrokAdapter
-from agent_orchestrator.models import Engine
+from orch.engines.antigravity import AntigravityAdapter
+from orch.engines.base import Capabilities, EngineAdapter
+from orch.engines.claude import ClaudeAdapter
+from orch.engines.codex import CodexAdapter
+from orch.engines.grok import GrokAdapter
+from orch.models import Engine
 
 
 def build_adapters() -> dict[Engine, EngineAdapter]:

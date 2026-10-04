@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from agent_orchestrator.models import Priority, Risk, Task, TaskKind, TaskStatus
-from agent_orchestrator.prompts import build_prompt, schema_for
-from agent_orchestrator.router import AccessLevel
+from orch.models import Priority, Risk, Task, TaskKind, TaskStatus
+from orch.prompts import build_prompt, schema_for
+from orch.router import AccessLevel
 
 
 def make_task(kind: TaskKind, risk: Risk = Risk.NORMAL) -> Task:

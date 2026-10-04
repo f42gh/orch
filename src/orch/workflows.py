@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.dispatch import Dispatched, spawn_worker
-from agent_orchestrator.engines import probe_all
-from agent_orchestrator.models import (
+from orch.config import Config
+from orch.db import TaskStore
+from orch.dispatch import Dispatched, spawn_worker
+from orch.engines import probe_all
+from orch.models import (
     Engine,
     PreparedWorkflowTask,
     Priority,
@@ -25,7 +25,7 @@ from agent_orchestrator.models import (
     WorkflowTaskRequest,
     WorkflowType,
 )
-from agent_orchestrator.router import (
+from orch.router import (
     RoutingError,
     load_routing_table,
     resolve_workflow_engine,

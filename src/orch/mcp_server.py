@@ -30,11 +30,11 @@ from typing import Any
 
 from mcp.server import MCPServer
 
-from agent_orchestrator.config import Config, load_config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.dispatch import DispatchError, dispatch_task, pid_path
-from agent_orchestrator.engines import probe_all
-from agent_orchestrator.models import (
+from orch.config import Config, load_config
+from orch.db import TaskStore
+from orch.dispatch import DispatchError, dispatch_task, pid_path
+from orch.engines import probe_all
+from orch.models import (
     TERMINAL_STATUSES,
     Engine,
     Priority,
@@ -46,18 +46,18 @@ from agent_orchestrator.models import (
     WorkflowTaskRequest,
     WorkflowType,
 )
-from agent_orchestrator.parsing import (
+from orch.parsing import (
     parse_engine,
     parse_enum,
     parse_iso_datetime,
     route_overrides,
     task_request,
 )
-from agent_orchestrator.router import load_routing_table
-from agent_orchestrator.result import save_git_diff
-from agent_orchestrator.stats import build_stats
-from agent_orchestrator.usage import collect_usage
-from agent_orchestrator.views import (
+from orch.router import load_routing_table
+from orch.result import save_git_diff
+from orch.stats import build_stats
+from orch.usage import collect_usage
+from orch.views import (
     dispatched_batch,
     dispatched_detail,
     dispatched_task,
@@ -65,7 +65,7 @@ from agent_orchestrator.views import (
     workflow_details,
     workflow_summary,
 )
-from agent_orchestrator.workflows import (
+from orch.workflows import (
     WorkflowError,
     close_workflow,
     create_run,

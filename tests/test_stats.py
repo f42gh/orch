@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_orchestrator.models import (
+from orch.models import (
     Engine,
     Priority,
     Risk,
@@ -14,7 +14,7 @@ from agent_orchestrator.models import (
     TaskStatus,
     TokenUsage,
 )
-from agent_orchestrator.stats import _nearest_rank, build_stats, summarize
+from orch.stats import _nearest_rank, build_stats, summarize
 
 
 CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)

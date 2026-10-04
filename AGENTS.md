@@ -9,30 +9,30 @@ server in `mcp_server.py`.
 
 ## Project structure
 
-- `src/agent_orchestrator/router.py` — picks the engine from the task kind. The heart of
+- `src/orch/router.py` — picks the engine from the task kind. The heart of
   the thing; change routing here, not in prompts.
-- `src/agent_orchestrator/workflows.py` — persists immutable Run/Batch route snapshots,
+- `src/orch/workflows.py` — persists immutable Run/Batch route snapshots,
   resolves their engines and records task membership. Runs accept later tasks until
   closed; Batches never do.
-- `src/agent_orchestrator/engines/` — one adapter per CLI. Adapters are pure: they build
+- `src/orch/engines/` — one adapter per CLI. Adapters are pure: they build
   an argv and parse bytes. No spawning, no database, no filesystem beyond declared files.
-- `src/agent_orchestrator/command_installer.py` and `templates/orch.md` — safely install
+- `src/orch/command_installer.py` and `templates/orch.md` — safely install
   the Claude Code `/orch` workflow command. Never overwrite a different user command
   without a backup and explicit force.
-- `src/agent_orchestrator/worker.py` — everything process-shaped: spawning, live log
+- `src/orch/worker.py` — everything process-shaped: spawning, live log
   capture, timeouts, writing results back.
-- `src/agent_orchestrator/mcp_server.py` — the MCP control plane. Must never print to
+- `src/orch/mcp_server.py` — the MCP control plane. Must never print to
   stdout; that is the transport.
-- `src/agent_orchestrator/cli.py` — argparse only: every subcommand is a
+- `src/orch/cli.py` — argparse only: every subcommand is a
   `set_defaults(func=...)` handler taking `(args, ctx)`. `ctx.store` is lazy, so a
   command that answers without the database never creates one.
-- `src/agent_orchestrator/parsing.py` and `views.py` — the shared halves of the two
+- `src/orch/parsing.py` and `views.py` — the shared halves of the two
   entry points: parsing turns caller strings into enums and requests, views builds the
   JSON payloads. Both are used by `cli.py` and `mcp_server.py`; adding a rule or a
   field to one of them reaches both. Do not reintroduce a local copy.
-- `src/agent_orchestrator/db.py` — SQLite, the single source of truth shared by the MCP
+- `src/orch/db.py` — SQLite, the single source of truth shared by the MCP
   server, the daemon, the CLI and the React UI.
-- `src/agent_orchestrator/stats.py` — pure aggregation over tasks: cost, tokens, engine
+- `src/orch/stats.py` — pure aggregation over tasks: cost, tokens, engine
   time, diff size. No database, no git, no filesystem; filtering belongs in `list_tasks`.
 - `docs/engine-capabilities.md` — what each CLI *actually* does, measured. Read it before
   touching an adapter.

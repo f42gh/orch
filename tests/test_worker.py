@@ -16,11 +16,11 @@ from pathlib import Path
 
 import pytest
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.engines.base import Capabilities, EngineResult, RunSpec
-from agent_orchestrator.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus, TokenUsage
-from agent_orchestrator.worker import _spawn, run_task
+from orch.config import Config
+from orch.db import TaskStore
+from orch.engines.base import Capabilities, EngineResult, RunSpec
+from orch.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus, TokenUsage
+from orch.worker import _spawn, run_task
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -170,7 +170,7 @@ def test_successful_run_records_diff_cost_and_needs_review(
 ) -> None:
     config, store, task = prepared
     adapter = StubAdapter("printf 'wrote it\\n'; printf 'x = 1\\n' > added.py")
-    monkeypatch.setattr("agent_orchestrator.worker.get_adapter", lambda engine: adapter)
+    monkeypatch.setattr("orch.worker.get_adapter", lambda engine: adapter)
 
     status = run_task(config, store, task)
 
@@ -210,7 +210,7 @@ def test_reported_tokens_are_persisted(
         "printf 'done\n'",
         EngineResult(text="done", exit_code=0, tokens=tokens),
     )
-    monkeypatch.setattr("agent_orchestrator.worker.get_adapter", lambda engine: adapter)
+    monkeypatch.setattr("orch.worker.get_adapter", lambda engine: adapter)
 
     run_task(config, store, task)
 
@@ -239,7 +239,7 @@ def test_codex_rollout_model_and_quota_are_persisted(
         "printf 'done\n'",
         EngineResult(text="done", exit_code=0, session_id=session_id),
     )
-    monkeypatch.setattr("agent_orchestrator.worker.get_adapter", lambda engine: adapter)
+    monkeypatch.setattr("orch.worker.get_adapter", lambda engine: adapter)
 
     assert run_task(config, store, task) == TaskStatus.NEEDS_REVIEW
 
@@ -263,7 +263,7 @@ def test_codex_run_without_a_matching_rollout_finishes_cleanly(
         "printf 'done\n'",
         EngineResult(text="done", exit_code=0, session_id="missing-session"),
     )
-    monkeypatch.setattr("agent_orchestrator.worker.get_adapter", lambda engine: adapter)
+    monkeypatch.setattr("orch.worker.get_adapter", lambda engine: adapter)
 
     assert run_task(config, store, task) == TaskStatus.NEEDS_REVIEW
 
@@ -281,7 +281,7 @@ def test_nonzero_exit_fails_the_task(
 ) -> None:
     config, store, task = prepared
     adapter = StubAdapter("printf 'boom\\n' >&2; exit 3")
-    monkeypatch.setattr("agent_orchestrator.worker.get_adapter", lambda engine: adapter)
+    monkeypatch.setattr("orch.worker.get_adapter", lambda engine: adapter)
 
     assert run_task(config, store, task) == TaskStatus.FAILED
 
@@ -297,7 +297,7 @@ def test_exit_zero_with_no_output_is_a_failure(
     """Exactly how the agy non-TTY bug presents. There is nothing for a human to review."""
     config, store, task = prepared
     monkeypatch.setattr(
-        "agent_orchestrator.worker.get_adapter", lambda engine: StubAdapter("true")
+        "orch.worker.get_adapter", lambda engine: StubAdapter("true")
     )
 
     assert run_task(config, store, task) == TaskStatus.FAILED
@@ -310,7 +310,7 @@ def test_a_leaked_credential_becomes_a_warning(
     adapter = StubAdapter(
         "printf 'done\\n'; printf \"KEY = 'AKIAIOSFODNN7EXAMPLE'\\n\" > leaked.py"
     )
-    monkeypatch.setattr("agent_orchestrator.worker.get_adapter", lambda engine: adapter)
+    monkeypatch.setattr("orch.worker.get_adapter", lambda engine: adapter)
 
     run_task(config, store, task)
 
@@ -323,10 +323,10 @@ def test_a_run_that_overruns_is_failed_and_explained(
 ) -> None:
     config, store, task = prepared
     monkeypatch.setattr(
-        "agent_orchestrator.worker.get_adapter", lambda engine: StubAdapter("sleep 30")
+        "orch.worker.get_adapter", lambda engine: StubAdapter("sleep 30")
     )
     monkeypatch.setattr(
-        "agent_orchestrator.worker.resolve_policy",
+        "orch.worker.resolve_policy",
         lambda kind, risk, engine, table: _fast_timeout_policy(),
     )
 
@@ -337,7 +337,7 @@ def test_a_run_that_overruns_is_failed_and_explained(
 
 
 def _fast_timeout_policy():
-    from agent_orchestrator.router import AccessLevel, EnginePolicy
+    from orch.router import AccessLevel, EnginePolicy
 
     return EnginePolicy(access=AccessLevel.WORKSPACE_WRITE, max_turns=1, timeout_s=1)
 
@@ -353,7 +353,7 @@ def test_missing_binary_fails_cleanly(
             return RunSpec(argv=["definitely-not-a-real-binary-xyz"])
 
     monkeypatch.setattr(
-        "agent_orchestrator.worker.get_adapter", lambda engine: MissingAdapter("")
+        "orch.worker.get_adapter", lambda engine: MissingAdapter("")
     )
 
     assert run_task(config, store, task) == TaskStatus.FAILED
@@ -379,7 +379,7 @@ def test_artifacts_directory_is_available_to_the_adapter(
             return RunSpec(argv=["printf", "ok\\n"], files={artifacts / "note.txt": "hi"})
 
     monkeypatch.setattr(
-        "agent_orchestrator.worker.get_adapter", lambda engine: RecordingAdapter("")
+        "orch.worker.get_adapter", lambda engine: RecordingAdapter("")
     )
     config, store, task = prepared
 

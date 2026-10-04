@@ -1,10 +1,10 @@
-from agent_orchestrator.engines.base import (
+from orch.engines.base import (
     Capabilities,
     EngineAdapter,
     EngineResult,
     RunSpec,
 )
-from agent_orchestrator.engines.registry import available_engines, get_adapter, probe_all
+from orch.engines.registry import available_engines, get_adapter, probe_all
 
 __all__ = [
     "Capabilities",

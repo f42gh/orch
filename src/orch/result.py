@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.logging_utils import task_log_dir, write_json
-from agent_orchestrator.models import Engine, Task, TaskStatus
+from orch.config import Config
+from orch.logging_utils import task_log_dir, write_json
+from orch.models import Engine, Task, TaskStatus
 
 
 #: Machine-generated caches that agents create as a side effect of running tests.

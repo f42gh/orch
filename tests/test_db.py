@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-import agent_orchestrator.db as db_module
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.models import (
+import orch.db as db_module
+from orch.config import Config
+from orch.db import TaskStore
+from orch.models import (
     Engine,
     FallbackMode,
     PreparedWorkflowTask,

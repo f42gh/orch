@@ -9,8 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
 
-from agent_orchestrator.config import Config, ensure_runtime_dirs
-from agent_orchestrator.models import (
+from orch.config import Config, ensure_runtime_dirs
+from orch.models import (
     Engine,
     FallbackMode,
     PreparedWorkflowTask,
@@ -30,7 +30,7 @@ from agent_orchestrator.models import (
     parse_datetime,
     utc_now_iso,
 )
-from agent_orchestrator.workspace import branch_name_for_task
+from orch.workspace import branch_name_for_task
 
 
 SCHEMA = """

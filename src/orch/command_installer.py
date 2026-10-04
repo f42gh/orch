@@ -42,7 +42,7 @@ def command_template(locale: str = "en") -> str:
         raise CommandInstallError(
             f"unsupported command locale {locale!r}; choose one of: {supported}"
         ) from None
-    template = resources.files("agent_orchestrator").joinpath("templates", template_name)
+    template = resources.files("orch").joinpath("templates", template_name)
     return template.read_text(encoding="utf-8")
 
 

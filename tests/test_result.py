@@ -11,9 +11,9 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus
-from agent_orchestrator.result import (
+from orch.config import Config
+from orch.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus
+from orch.result import (
     changed_files,
     diff_numstat,
     diff_stat,

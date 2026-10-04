@@ -1,4 +1,4 @@
-from agent_orchestrator.guardrails import is_command_blocked
+from orch.guardrails import is_command_blocked
 
 
 def test_blocks_rm_rf_root() -> None:

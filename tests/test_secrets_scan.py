@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.logging_utils import task_log_dir
-from agent_orchestrator.secrets_scan import scan_diff, scan_logs, scan_task_artifacts, shannon_entropy
+from orch.config import Config
+from orch.logging_utils import task_log_dir
+from orch.secrets_scan import scan_diff, scan_logs, scan_task_artifacts, shannon_entropy
 
 
 def test_flags_a_credential_added_by_the_agent() -> None:

@@ -13,10 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.mcp_server import MAX_WAIT_S, DispatchError, build_server, wait_budget
-from agent_orchestrator.models import Engine, Priority, Risk, TaskKind, TaskStatus
+from orch.config import Config
+from orch.db import TaskStore
+from orch.mcp_server import MAX_WAIT_S, DispatchError, build_server, wait_budget
+from orch.models import Engine, Priority, Risk, TaskKind, TaskStatus
 
 
 def init_repo(path: Path) -> None:
@@ -39,19 +39,19 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Config, Path, 
 
     spawned: list[str] = []
     monkeypatch.setattr(
-        "agent_orchestrator.dispatch.spawn_worker",
+        "orch.dispatch.spawn_worker",
         lambda cfg, task_id: (spawned.append(task_id), 4242)[1],
     )
     # Pretend every engine is installed so routing is exercised, not the machine.
     # Dispatch resolves engines through its own module; orch_engines through this one.
     fake_probe = lambda refresh=False: {engine: _fake_caps(engine) for engine in Engine}  # noqa: E731
-    monkeypatch.setattr("agent_orchestrator.dispatch.probe_all", fake_probe)
-    monkeypatch.setattr("agent_orchestrator.mcp_server.probe_all", fake_probe)
+    monkeypatch.setattr("orch.dispatch.probe_all", fake_probe)
+    monkeypatch.setattr("orch.mcp_server.probe_all", fake_probe)
     return config, repo, spawned
 
 
 def _fake_caps(engine: Engine):
-    from agent_orchestrator.engines.base import Capabilities
+    from orch.engines.base import Capabilities
 
     return Capabilities(
         engine=engine,
@@ -115,7 +115,7 @@ def test_dispatch_rejects_an_engine_this_machine_lacks(
 ) -> None:
     config, repo, _ = env
     monkeypatch.setattr(
-        "agent_orchestrator.dispatch.probe_all",
+        "orch.dispatch.probe_all",
         lambda refresh=False: {Engine.CLAUDE: _fake_caps(Engine.CLAUDE)},
     )
     server = build_server(config)

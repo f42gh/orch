@@ -3,8 +3,8 @@ import subprocess
 
 import pytest
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.workspace import (
+from orch.config import Config
+from orch.workspace import (
     WorkspaceError,
     branch_name_for_task,
     create_workspace,

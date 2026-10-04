@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from agent_orchestrator.engines.base import (
+from orch.engines.base import (
     Capabilities,
     EngineResult,
     RunSpec,
@@ -24,9 +24,9 @@ from agent_orchestrator.engines.base import (
     read_version,
     which,
 )
-from agent_orchestrator.models import Engine, Task, TokenUsage
-from agent_orchestrator.prompts import schema_for
-from agent_orchestrator.router import AccessLevel, EnginePolicy
+from orch.models import Engine, Task, TokenUsage
+from orch.prompts import schema_for
+from orch.router import AccessLevel, EnginePolicy
 
 
 BINARY = "grok"

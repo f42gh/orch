@@ -13,7 +13,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from agent_orchestrator.models import (
+from orch.models import (
     WRITING_KINDS,
     Engine,
     FallbackMode,

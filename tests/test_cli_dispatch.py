@@ -14,13 +14,13 @@ from pathlib import Path
 
 import pytest
 
-from agent_orchestrator.cli import main
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.dispatch import spawn_worker
-from agent_orchestrator.engines.base import Capabilities
-from agent_orchestrator.models import Engine, TaskStatus
-from agent_orchestrator.views import task_detail
+from orch.cli import main
+from orch.config import Config
+from orch.db import TaskStore
+from orch.dispatch import spawn_worker
+from orch.engines.base import Capabilities
+from orch.models import Engine, TaskStatus
+from orch.views import task_detail
 
 
 def _fake_caps(engine: Engine) -> Capabilities:
@@ -41,12 +41,12 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, li
 
     spawned: list[str] = []
     monkeypatch.setattr(
-        "agent_orchestrator.dispatch.spawn_worker",
+        "orch.dispatch.spawn_worker",
         lambda cfg, task_id: (spawned.append(task_id), 4242)[1],
     )
     fake_probe = lambda refresh=False: {engine: _fake_caps(engine) for engine in Engine}  # noqa: E731
-    monkeypatch.setattr("agent_orchestrator.dispatch.probe_all", fake_probe)
-    monkeypatch.setattr("agent_orchestrator.cli.probe_all", fake_probe)
+    monkeypatch.setattr("orch.dispatch.probe_all", fake_probe)
+    monkeypatch.setattr("orch.cli.probe_all", fake_probe)
     return runtime, repo, spawned
 
 
@@ -106,7 +106,7 @@ def test_dispatch_reports_a_spawn_failure_without_a_traceback(
     """A queued row already exists when spawning fails, so the message has to say so."""
     runtime, repo, _ = env
     monkeypatch.setattr(
-        "agent_orchestrator.dispatch.spawn_worker",
+        "orch.dispatch.spawn_worker",
         lambda cfg, task_id: (_ for _ in ()).throw(OSError("Too many open files")),
     )
 
@@ -187,11 +187,11 @@ def test_spawn_worker_stops_the_child_when_pid_file_cannot_be_written(
             return 0
 
     monkeypatch.setattr(
-        "agent_orchestrator.dispatch.subprocess.Popen",
+        "orch.dispatch.subprocess.Popen",
         lambda *args, **kwargs: FakeProcess(),
     )
     monkeypatch.setattr(
-        "agent_orchestrator.dispatch.os.killpg",
+        "orch.dispatch.os.killpg",
         lambda pid, sig: killed.append((pid, sig)),
     )
     original_write_text = Path.write_text
@@ -234,11 +234,11 @@ def test_spawn_worker_falls_back_to_process_signals(
             signals.append("kill")
 
     monkeypatch.setattr(
-        "agent_orchestrator.dispatch.subprocess.Popen",
+        "orch.dispatch.subprocess.Popen",
         lambda *args, **kwargs: FakeProcess(),
     )
     monkeypatch.setattr(
-        "agent_orchestrator.dispatch.os.killpg",
+        "orch.dispatch.os.killpg",
         lambda pid, sig: (_ for _ in ()).throw(PermissionError("denied")),
     )
     original_write_text = Path.write_text

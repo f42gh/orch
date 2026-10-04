@@ -14,8 +14,8 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.logging_utils import task_log_dir
+from orch.config import Config
+from orch.logging_utils import task_log_dir
 
 
 #: Added lines that look like a credential landed in the diff.

@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-import agent_orchestrator.db as db_module
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.models import (
+import orch.db as db_module
+from orch.config import Config
+from orch.db import TaskStore
+from orch.models import (
     Engine,
     FallbackMode,
     Risk,
@@ -22,14 +22,14 @@ from agent_orchestrator.models import (
     WorkflowTaskRequest,
     WorkflowType,
 )
-from agent_orchestrator.router import (
+from orch.router import (
     AccessLevel,
     RoutingError,
     resolve_policy,
     resolve_workflow_engine,
     snapshot_workflow_routes,
 )
-from agent_orchestrator.workflows import (
+from orch.workflows import (
     WorkflowError,
     close_workflow,
     create_run,
@@ -53,11 +53,11 @@ def env(
     store = TaskStore(config)
     spawned: list[str] = []
     monkeypatch.setattr(
-        "agent_orchestrator.workflows.spawn_worker",
+        "orch.workflows.spawn_worker",
         lambda cfg, task_id: (spawned.append(task_id), 4000 + len(spawned))[1],
     )
     monkeypatch.setattr(
-        "agent_orchestrator.workflows.probe_all",
+        "orch.workflows.probe_all",
         lambda refresh=False: {engine: object() for engine in Engine},
     )
     return config, store, repo, spawned
@@ -194,7 +194,7 @@ def test_run_resolution_failure_creates_no_task(
         },
     )
     monkeypatch.setattr(
-        "agent_orchestrator.workflows.probe_all",
+        "orch.workflows.probe_all",
         lambda refresh=False: {Engine.CODEX: object()},
     )
 
@@ -255,7 +255,7 @@ def test_run_reports_a_spawn_failure_and_keeps_the_queued_task(
     config, store, repo, _ = env
     run = create_run(config, store, repo=repo).workflow
     monkeypatch.setattr(
-        "agent_orchestrator.workflows.spawn_worker",
+        "orch.workflows.spawn_worker",
         lambda cfg, task_id: (_ for _ in ()).throw(OSError("cannot spawn")),
     )
 
@@ -290,7 +290,7 @@ def test_run_dispatch_refreshes_engine_availability(
         refreshes.append(refresh)
         return {Engine.CODEX: object()}
 
-    monkeypatch.setattr("agent_orchestrator.workflows.probe_all", probe)
+    monkeypatch.setattr("orch.workflows.probe_all", probe)
 
     dispatch_run(config, store, run_id=run.id, task="fresh probe")
 
@@ -302,7 +302,7 @@ def test_batch_preflight_failure_writes_nothing(
 ) -> None:
     config, store, repo, spawned = env
     monkeypatch.setattr(
-        "agent_orchestrator.workflows.probe_all",
+        "orch.workflows.probe_all",
         lambda refresh=False: {Engine.CODEX: object()},
     )
 
@@ -398,7 +398,7 @@ def test_batch_reports_a_spawn_failure_and_starts_remaining_tasks(
             raise OSError("cannot spawn")
         return 5000 + len(calls)
 
-    monkeypatch.setattr("agent_orchestrator.workflows.spawn_worker", spawn)
+    monkeypatch.setattr("orch.workflows.spawn_worker", spawn)
 
     result = dispatch_batch(
         config,

@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import ADDED_COLUMNS, TaskStore
-from agent_orchestrator.models import Engine, Priority, Risk, TaskKind, TaskStatus
+from orch.config import Config
+from orch.db import ADDED_COLUMNS, TaskStore
+from orch.models import Engine, Priority, Risk, TaskKind, TaskStatus
 
 
 V0_SCHEMA = """

@@ -5,13 +5,13 @@ import json
 from pathlib import Path
 from typing import Any
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.guardrails import is_command_blocked
-from agent_orchestrator.logging_utils import append_log, task_log_dir
-from agent_orchestrator.models import Risk, Task, TaskStatus
-from agent_orchestrator.result import save_git_diff, write_result_json
-from agent_orchestrator.router import resolve_allowed_tools
+from orch.config import Config
+from orch.db import TaskStore
+from orch.guardrails import is_command_blocked
+from orch.logging_utils import append_log, task_log_dir
+from orch.models import Risk, Task, TaskStatus
+from orch.result import save_git_diff, write_result_json
+from orch.router import resolve_allowed_tools
 
 
 def build_prompt(task: Task) -> str:

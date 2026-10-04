@@ -6,8 +6,8 @@ CLI ends up running it, otherwise comparing two engines' diffs tells you nothing
 
 from __future__ import annotations
 
-from agent_orchestrator.models import Risk, Task, TaskKind
-from agent_orchestrator.router import AccessLevel
+from orch.models import Risk, Task, TaskKind
+from orch.router import AccessLevel
 
 
 KIND_INSTRUCTIONS: dict[TaskKind, str] = {

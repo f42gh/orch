@@ -2,12 +2,12 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from agent_orchestrator.api import create_app
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.logging_utils import task_log_dir
-from agent_orchestrator.result import write_result_json
-from agent_orchestrator.models import Risk, TaskStatus
+from orch.api import create_app
+from orch.config import Config
+from orch.db import TaskStore
+from orch.logging_utils import task_log_dir
+from orch.result import write_result_json
+from orch.models import Risk, TaskStatus
 
 
 def make_client(tmp_path: Path) -> TestClient:

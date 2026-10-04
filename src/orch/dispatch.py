@@ -13,13 +13,13 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.engines import probe_all
-from agent_orchestrator.logging_utils import task_log_dir
-from agent_orchestrator.models import Engine, Priority, Risk, Task, TaskKind
-from agent_orchestrator.router import RoutingError, load_routing_table, resolve_engine
-from agent_orchestrator.workspace import branch_name_for_task
+from orch.config import Config
+from orch.db import TaskStore
+from orch.engines import probe_all
+from orch.logging_utils import task_log_dir
+from orch.models import Engine, Priority, Risk, Task, TaskKind
+from orch.router import RoutingError, load_routing_table, resolve_engine
+from orch.workspace import branch_name_for_task
 
 
 class DispatchError(RuntimeError):
@@ -54,7 +54,7 @@ def spawn_worker(config: Config, task_id: str) -> int:
             [
                 sys.executable,
                 "-m",
-                "agent_orchestrator.daemon",
+                "orch.daemon",
                 "run-task",
                 task_id,
                 "--runtime-root",

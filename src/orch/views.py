@@ -11,12 +11,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.dispatch import Dispatched
-from agent_orchestrator.models import Task, Workflow, WorkflowDetails
-from agent_orchestrator.stats import summarize
-from agent_orchestrator.workflows import (
+from orch.config import Config
+from orch.db import TaskStore
+from orch.dispatch import Dispatched
+from orch.models import Task, Workflow, WorkflowDetails
+from orch.stats import summarize
+from orch.workflows import (
     DispatchedBatch,
     DispatchedWorkflowTask,
     show_workflow,

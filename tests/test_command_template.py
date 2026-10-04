@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_orchestrator.command_installer import command_template
+from orch.command_installer import command_template
 
 
 REQUIRED_TOOLS = (

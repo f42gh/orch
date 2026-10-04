@@ -13,21 +13,21 @@ import threading
 import time
 from pathlib import Path
 
-from agent_orchestrator.config import Config
-from agent_orchestrator.db import TaskStore
-from agent_orchestrator.engines import EngineResult, RunSpec, get_adapter
-from agent_orchestrator.logging_utils import append_log, task_log_dir
-from agent_orchestrator.models import Engine, Task, TaskStatus
-from agent_orchestrator.prompts import build_prompt, schema_for
-from agent_orchestrator.result import DiffStat, diff_numstat, save_git_diff, write_result_json
-from agent_orchestrator.router import (
+from orch.config import Config
+from orch.db import TaskStore
+from orch.engines import EngineResult, RunSpec, get_adapter
+from orch.logging_utils import append_log, task_log_dir
+from orch.models import Engine, Task, TaskStatus
+from orch.prompts import build_prompt, schema_for
+from orch.result import DiffStat, diff_numstat, save_git_diff, write_result_json
+from orch.router import (
     EnginePolicy,
     RoutingTable,
     load_routing_table,
     resolve_policy,
 )
-from agent_orchestrator.secrets_scan import scan_task_artifacts
-from agent_orchestrator.session_logs import read_codex_session
+from orch.secrets_scan import scan_task_artifacts
+from orch.session_logs import read_codex_session
 
 #: How long a killed process gets to exit before SIGKILL.
 TERM_GRACE_S = 10.0

@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from agent_orchestrator import usage as usage_module
-from agent_orchestrator.cli import main
-from agent_orchestrator.models import Engine
-from agent_orchestrator.usage import (
+from orch import usage as usage_module
+from orch.cli import main
+from orch.models import Engine
+from orch.usage import (
     UsageReport,
     UsageWindow,
     collect_usage,
@@ -293,7 +293,7 @@ def test_usage_command_lists_every_engine_and_flags_the_stale_reading(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(
-        "agent_orchestrator.cli.collect_usage", lambda: _fixture_report(tmp_path)
+        "orch.cli.collect_usage", lambda: _fixture_report(tmp_path)
     )
     monkeypatch.setattr(
         "sys.argv",
@@ -324,7 +324,7 @@ def test_usage_command_does_not_create_the_runtime_database(
     """Reading a quota must stay read-only: no runtime root, no database, no worktree."""
     runtime = tmp_path / "runtime"
     monkeypatch.setattr(
-        "agent_orchestrator.cli.collect_usage", lambda: _fixture_report(tmp_path)
+        "orch.cli.collect_usage", lambda: _fixture_report(tmp_path)
     )
     monkeypatch.setattr("sys.argv", ["orch", "--runtime-root", str(runtime), "usage", "--json"])
 
