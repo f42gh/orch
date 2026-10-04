@@ -332,10 +332,13 @@ def test_the_cli_imports_without_the_optional_extras(monkeypatch: pytest.MonkeyP
 
 def test_init_asks_each_kind_and_enter_keeps_the_installed_order() -> None:
     installed = (Engine.CLAUDE, Engine.CODEX)
-    answers = io.StringIO("codex, agy\n" + "\n" * (len(TaskKind) - 1))
+    answers = io.StringIO("y\ncodex, agy\n" + "\n" * (len(TaskKind) - 1))
     chains = init_chains(installed, stdin=answers, prompt_output=io.StringIO())
 
     assert chains[TaskKind.IMPLEMENT] == (Engine.CODEX, Engine.ANTIGRAVITY)
     assert chains[TaskKind.REVIEW] == installed
     with pytest.raises(WorkflowError, match="twice"):
-        init_chains(installed, stdin=io.StringIO("codex,codex\n"), prompt_output=io.StringIO())
+        init_chains(installed, stdin=io.StringIO("y\ncodex,codex\n"), prompt_output=io.StringIO())
+    # Declining (Enter defaults to no) gives every kind the detected engines.
+    declined = init_chains(installed, stdin=io.StringIO("\n"), prompt_output=io.StringIO())
+    assert set(declined.values()) == {installed}

@@ -360,7 +360,7 @@ Unsandboxed access requires an explicit opt-in in `routing.toml`; nothing reache
 
 ## Tuning the routing
 
-`~/.config/agent-orchestrator/routing.toml` is written by `orch init`. Routes live only
+`~/.config/orch/routing.toml` is written by `orch init`. Routes live only
 here: a kind the file does not mention does not run unless an engine is named. Budgets
 and deny rules override only the keys present. A Run or Batch snapshots its
 materialized routes when it is created, so later edits do not change that workflow:

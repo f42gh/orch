@@ -7,7 +7,7 @@ from pathlib import Path
 
 RUNTIME_ROOT_ENV = "AGENT_ORCHESTRATOR_RUNTIME_ROOT"
 ROUTING_PATH_ENV = "AGENT_ORCHESTRATOR_ROUTING"
-DEFAULT_ROUTING_PATH = "~/.config/agent-orchestrator/routing.toml"
+DEFAULT_ROUTING_PATH = "~/.config/orch/routing.toml"
 
 
 def default_routing_path() -> Path:

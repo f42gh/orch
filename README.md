@@ -343,7 +343,7 @@ note: antigravity agy reports no quota: its JSON result carries tokens only, …
 
 ## ルーティングのチューニング
 
-`~/.config/agent-orchestrator/routing.toml` は `orch init` が書き出す。ルートはこのファイルにしか
+`~/.config/orch/routing.toml` は `orch init` が書き出す。ルートはこのファイルにしか
 なく、書かれていない kind はエンジンを明示しない限り動かない。budget と deny ルールは書いた
 キーだけが上書きされる。Run と Batch は作成時に具体化したルートを保存するため、後からこの
 ファイルを変更しても既存ワークフローは変わらない:

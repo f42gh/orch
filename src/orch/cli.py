@@ -1162,8 +1162,16 @@ def _handle_init(args: argparse.Namespace, ctx: Context) -> None:
 def init_chains(
     installed: tuple[Engine, ...], *, stdin: TextIO, prompt_output: TextIO
 ) -> dict[TaskKind, tuple[Engine, ...]]:
-    """Ask for each kind's engine order; Enter keeps the installed order."""
+    """Offer the detected engines for every kind, or ask each kind's order."""
     default = ",".join(engine.value for engine in installed)
+    print(f"Detected engines: {default}", file=prompt_output)
+    if not _prompt_yes_no(
+        "Set the engine order per kind now? (n: use the detected engines for every kind)",
+        default=False,
+        stdin=stdin,
+        prompt_output=prompt_output,
+    ):
+        return {kind: installed for kind in TaskKind}
     chains: dict[TaskKind, tuple[Engine, ...]] = {}
     for kind in TaskKind:
         raw = _prompt(kind.value, default=default, stdin=stdin, prompt_output=prompt_output)
