@@ -65,8 +65,6 @@ Everything is under the one `orch` command:
 | `orch daemon run` | the worker that drains the queue |
 | `orch mcp` | MCP server over stdio |
 
-The older `agentmcp` name remains as an alias, so existing MCP registrations keep working.
-
 Each CLI needs to be installed and authenticated on its own. Nothing here stores
 credentials.
 

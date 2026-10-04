@@ -15,7 +15,6 @@ Nothing here may print to stdout: that is the MCP transport.
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import os
@@ -584,21 +583,7 @@ def _kill_worker(config: Config, task_id: str) -> bool:
 
 
 def serve(runtime_root: str | None = None, routing: str | None = None) -> None:
-    """Serve MCP over stdio. Shared by `orch mcp` and `agentmcp`."""
+    """Serve MCP over stdio for `orch mcp`."""
     config = load_config(runtime_root, routing)
     TaskStore(config)  # create the runtime tree and migrate before serving
     build_server(config).run("stdio")
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        prog="agentmcp", description="Deprecated alias for `orch mcp`."
-    )
-    parser.add_argument("--runtime-root", default=None, metavar="PATH")
-    parser.add_argument("--routing", default=None, metavar="PATH")
-    args = parser.parse_args()
-    serve(args.runtime_root, args.routing)
-
-
-if __name__ == "__main__":
-    main()

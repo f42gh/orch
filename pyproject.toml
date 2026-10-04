@@ -20,8 +20,6 @@ dev = [
 
 [project.scripts]
 orch = "orch.cli:main"
-# Alias: existing `claude mcp add` registrations invoke `agentmcp` by name.
-agentmcp = "orch.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]

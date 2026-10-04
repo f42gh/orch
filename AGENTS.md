@@ -57,8 +57,7 @@ orch daemon run --max-concurrency 2
 orch mcp                           # MCP server over stdio
 ```
 
-`orch` is the whole surface. `agentmcp` remains as an alias because existing
-`claude mcp add` registrations invoke it by name. New code and new docs use `orch`.
+`orch` is the whole surface.
 
 Run `uv run pytest` before submitting changes.
 
