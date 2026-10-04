@@ -6,24 +6,21 @@
 各タスクは専用の git worktree で実行され、結果は人間がレビューするために返される。
 
 Claude Code がオーケストレーターとなり、`codex`・`grok`・`agy`(Antigravity)・`claude` が
-MCP サーバー経由で呼び出されるワーカーになる。Run・Batch・単一タスクのいずれでも、利用ごとに
-エンジンの割り当てを選べる。kind を自動ルーティングのままにした場合は、次のデフォルトを使う:
+MCP サーバー経由で呼び出されるワーカーになる。どの kind をどのエンジンに送るかはコードに
+持たず、`routing.toml` だけで決める。最初に一度 `orch init` を実行すると、この端末で見つかった
+エンジンを全 kind に並べた `routing.toml` が書き出されるので、好みの順に並べ替える。
 
-| kind | 自動ルート | アクセス |
-|---|---|---|
-| `implement` | codex → claude → grok | 書き込み可(worktree 内のみ) |
-| `refactor` | codex → grok → claude | 書き込み可(worktree 内のみ) |
-| `test` | codex → claude → grok | 書き込み可(worktree 内のみ) |
-| `review` | grok → codex → claude | 読み取り専用 |
-| `investigate` | grok → claude → codex | 読み取り専用 |
-| `ui_verify` | antigravity → claude | 書き込み可(worktree 内のみ) |
+| kind | アクセス |
+|---|---|
+| `implement` / `refactor` / `test` / `ui_verify` | 書き込み可(worktree 内のみ) |
+| `review` / `investigate` | 読み取り専用 |
 
-自動モードでは、保存された候補が尽きても別のインストール済みエンジンを決定的な順で選ぶため、
-少なくとも1つのワーカー CLI が利用できれば処理を続けられる。各 CLI が実際に何をするかは、
+`routing.toml` がない間は、`--engine` で明示したタスクだけが動く。自動モードでは、保存された
+候補が尽きても別のインストール済みエンジンを決定的な順で選ぶ。各 CLI が実際に何をするかは、
 ドキュメントではなく実測に基づく[エンジン能力表](docs/engine-capabilities.md)に記録している。
 
-この表は固定割り当てではなくデフォルトである。対話式の `orch start`、単一タスクへの厳密な
-`--engine` 指定、または Run/Batch のルート表で自由に上書きできる。
+対話式の `orch start`、単一タスクへの厳密な `--engine` 指定、または Run/Batch のルート表で
+自由に上書きできる。
 
 新しいワークフローでは、このデフォルトを明示的なルート表で上書きできる。実行を始める前に
 一度だけ割り当てを決める:
@@ -346,9 +343,10 @@ note: antigravity agy reports no quota: its JSON result carries tokens only, …
 
 ## ルーティングのチューニング
 
-`~/.config/agent-orchestrator/routing.toml` は任意。書いたキーだけが上書きされる。この表は
-自動選択のデフォルトを提供する。Run と Batch は作成時に具体化したルートを保存するため、
-後からこのファイルを変更しても既存ワークフローは変わらない:
+`~/.config/agent-orchestrator/routing.toml` は `orch init` が書き出す。ルートはこのファイルにしか
+なく、書かれていない kind はエンジンを明示しない限り動かない。budget と deny ルールは書いた
+キーだけが上書きされる。Run と Batch は作成時に具体化したルートを保存するため、後からこの
+ファイルを変更しても既存ワークフローは変わらない:
 
 ```toml
 [kinds.implement]

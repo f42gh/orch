@@ -25,6 +25,7 @@ from orch.models import (
 from orch.router import (
     AccessLevel,
     RoutingError,
+    load_routing_table,
     resolve_policy,
     resolve_workflow_engine,
     snapshot_workflow_routes,
@@ -42,13 +43,13 @@ from orch.workflows import (
 
 @pytest.fixture
 def env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, routing_file: Path
 ) -> tuple[Config, TaskStore, Path, list[str]]:
     repo = tmp_path / "repo"
     repo.mkdir()
     config = Config(
         runtime_root=tmp_path / "runtime",
-        routing_path=tmp_path / "missing-routing.toml",
+        routing_path=routing_file,
     )
     store = TaskStore(config)
     spawned: list[str] = []
@@ -92,8 +93,11 @@ def test_existing_database_migrates_workflow_tables(tmp_path: Path) -> None:
     assert {"workflows", "workflow_routes", "workflow_tasks"} <= tables
 
 
-def test_route_snapshot_is_complete_and_auto_chains_after_custom_primary() -> None:
+def test_route_snapshot_is_complete_and_auto_chains_after_custom_primary(
+    routing_file: Path,
+) -> None:
     routes = snapshot_workflow_routes(
+        load_routing_table(routing_file),
         overrides={TaskKind.IMPLEMENT: WorkflowRouteOverride(Engine.CLAUDE)}
     )
 

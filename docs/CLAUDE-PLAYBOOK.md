@@ -40,16 +40,18 @@ Do not dispatch while any of those choices is implicit.
 
 ## Kinds and route safety
 
-When a route is not specified, `kind` supplies the automatic primary:
+When a route is not specified, `kind` is looked up in `routing.toml`, which `orch init`
+writes; `orch_engines` shows the current table. An empty table means the file is missing:
+ask the user to run `orch init`, or name the engine.
 
-| kind | goes to | use it when |
-|---|---|---|
-| `implement` | codex | writing new behaviour |
-| `refactor` | codex | changing structure, not behaviour |
-| `test` | codex | adding or fixing tests |
-| `review` | grok | you want findings on code that already exists |
-| `investigate` | grok | you need to understand something before deciding |
-| `ui_verify` | antigravity | it has to be checked in a browser |
+| kind | use it when |
+|---|---|
+| `implement` | writing new behaviour |
+| `refactor` | changing structure, not behaviour |
+| `test` | adding or fixing tests |
+| `review` | you want findings on code that already exists |
+| `investigate` | you need to understand something before deciding |
+| `ui_verify` | it has to be checked in a browser |
 
 `review` and `investigate` run read-only and cannot modify anything, so they are cheap to
 reach for and safe to run against a repository you care about.

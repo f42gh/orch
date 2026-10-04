@@ -66,22 +66,6 @@ class EnginePolicy:
         return self.access
 
 
-#: Which engine handles which kind of work, and what to fall back to.
-#:
-#: codex leads implementation because its non-interactive mode is the most complete
-#: (structured output, a written final-message file, kernel sandbox levels). grok leads
-#: read-only work because it returns a single JSON object with cost and can be pinned to
-#: a JSON schema. antigravity leads UI work because of its browser agent, but it reports
-#: no session, usage or cost, so it is never the fallback for anything.
-DEFAULT_ROUTES: Mapping[TaskKind, EngineRoute] = {
-    TaskKind.IMPLEMENT: EngineRoute(Engine.CODEX, (Engine.CLAUDE, Engine.GROK)),
-    TaskKind.REFACTOR: EngineRoute(Engine.CODEX, (Engine.GROK, Engine.CLAUDE)),
-    TaskKind.TEST: EngineRoute(Engine.CODEX, (Engine.CLAUDE, Engine.GROK)),
-    TaskKind.REVIEW: EngineRoute(Engine.GROK, (Engine.CODEX, Engine.CLAUDE)),
-    TaskKind.INVESTIGATE: EngineRoute(Engine.GROK, (Engine.CLAUDE, Engine.CODEX)),
-    TaskKind.UI_VERIFY: EngineRoute(Engine.ANTIGRAVITY, (Engine.CLAUDE,)),
-}
-
 #: Turn and wall-clock budgets per risk level. These are the main cost controls.
 DEFAULT_BUDGETS: Mapping[Risk, tuple[int, int]] = {
     Risk.READ_ONLY: (12, 600),
@@ -123,7 +107,7 @@ class RoutingTable:
 
 
 DEFAULT_TABLE = RoutingTable(
-    routes=DEFAULT_ROUTES,
+    routes={},
     budgets=DEFAULT_BUDGETS,
     deny_rules=DEFAULT_DENY_RULES,
     dangerous_engines=frozenset(),
@@ -131,10 +115,11 @@ DEFAULT_TABLE = RoutingTable(
 
 
 def load_routing_table(path: Path | None) -> RoutingTable:
-    """Load `routing.toml`, falling back to the built-in table when absent.
+    """Load `routing.toml`. Routes come only from the file, which `orch init` writes.
 
-    Only the keys present in the file are overridden, so a file that retunes one kind
-    does not have to restate the rest of the table.
+    There is deliberately no built-in engine preference: without the file every kind is
+    unrouted, and only an explicit engine request can run. Budgets and deny rules keep
+    their defaults, so a file that sets only routes does not have to restate them.
     """
     if path is None or not path.exists():
         return DEFAULT_TABLE
@@ -142,7 +127,7 @@ def load_routing_table(path: Path | None) -> RoutingTable:
     with path.open("rb") as handle:
         raw = tomllib.load(handle)
 
-    routes = dict(DEFAULT_ROUTES)
+    routes: dict[TaskKind, EngineRoute] = {}
     for name, entry in (raw.get("kinds") or {}).items():
         kind = _parse_enum(TaskKind, name, f"kinds.{name}")
         engine = _parse_enum(Engine, entry.get("engine"), f"kinds.{name}.engine")
@@ -172,6 +157,32 @@ def load_routing_table(path: Path | None) -> RoutingTable:
     )
 
 
+def render_routing_toml(engines: Iterable[Engine]) -> str:
+    """Draft a routing.toml that sends every kind to the installed engines.
+
+    No engine is preferred: they are listed alphabetically, the same order the
+    any-installed rescue uses, and the user reorders them per kind.
+    """
+    names = sorted(engine.value for engine in engines)
+    if not names:
+        raise RoutingError("no coding agent CLI is available on this machine")
+    lines: list[str] = []
+    for kind in TaskKind:
+        fallbacks = ", ".join(f'"{name}"' for name in names[1:])
+        lines += [f"[kinds.{kind.value}]", f'engine = "{names[0]}"', f"fallbacks = [{fallbacks}]", ""]
+    return "\n".join(lines)
+
+
+def configured_route(table: RoutingTable, kind: TaskKind) -> EngineRoute:
+    route = table.routes.get(kind)
+    if route is None:
+        raise RoutingError(
+            f"no route for {kind.value}: run `orch init` to write routing.toml, "
+            "or pass an engine explicitly"
+        )
+    return route
+
+
 def resolve_engine(
     kind: TaskKind,
     available: Iterable[Engine],
@@ -195,7 +206,7 @@ def resolve_engine(
             f"(available: {', '.join(sorted(e.value for e in usable))})"
         )
 
-    route = table.routes.get(kind) or DEFAULT_ROUTES[kind]
+    route = configured_route(table, kind)
     for candidate in (route.engine, *route.fallbacks):
         if candidate in usable:
             return candidate
@@ -223,9 +234,10 @@ def snapshot_workflow_routes(
 
     snapshots: list[WorkflowRoute] = []
     for kind in TaskKind:
-        configured = table.routes.get(kind) or DEFAULT_ROUTES[kind]
+        configured = table.routes.get(kind)
         override = supplied.get(kind)
         if override is None:
+            configured = configured_route(table, kind)
             primary = configured.engine
             mode = FallbackMode.AUTO
             candidates = configured.fallbacks
@@ -236,7 +248,7 @@ def snapshot_workflow_routes(
         else:
             primary = override.primary
             mode = FallbackMode.AUTO
-            candidates = (configured.engine, *configured.fallbacks)
+            candidates = (configured.engine, *configured.fallbacks) if configured else ()
 
         fallbacks = tuple(
             candidate

@@ -158,7 +158,8 @@ def build_server(config: Config) -> MCPServer:
         description=(
             "List the agent CLIs installed on this machine, what each can report, and the "
             "kind-to-engine routing table. Call this before dispatching so you know which "
-            "engines are actually available."
+            "engines are actually available. An empty routing table means routing.toml is "
+            "missing: ask the user to run `orch init`, or pass `engine` explicitly."
         )
     )
     def orch_engines() -> dict[str, Any]:
@@ -189,9 +190,9 @@ def build_server(config: Config) -> MCPServer:
         description=(
             "Queue a task and start it in a fresh git worktree. Returns immediately with a "
             "task_id — it does not wait for the work. `kind` selects the engine "
-            "(implement/refactor/test go to codex, review/investigate to grok, ui_verify to "
-            "antigravity); pass `engine` only to override that. Dispatch the same work "
-            "twice with different engines and a shared `parent_id` to compare them."
+            "through routing.toml (see orch_engines); pass `engine` only to override that. "
+            "Dispatch the same work twice with different engines and a shared `parent_id` "
+            "to compare them."
         )
     )
     def orch_dispatch(

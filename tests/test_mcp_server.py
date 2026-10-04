@@ -29,12 +29,14 @@ def init_repo(path: Path) -> None:
 
 
 @pytest.fixture
-def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Config, Path, list[str]]:
+def env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, routing_file: Path
+) -> tuple[Config, Path, list[str]]:
     repo = tmp_path / "repo"
     repo.mkdir()
     init_repo(repo)
 
-    config = Config(runtime_root=tmp_path / "runtime", routing_path=tmp_path / "absent.toml")
+    config = Config(runtime_root=tmp_path / "runtime", routing_path=routing_file)
     TaskStore(config)
 
     spawned: list[str] = []

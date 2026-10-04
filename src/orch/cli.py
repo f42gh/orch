@@ -41,7 +41,7 @@ from orch.parsing import (
     require_engine,
     route_overrides_from_flags,
 )
-from orch.router import load_routing_table
+from orch.router import RoutingError, load_routing_table, render_routing_toml
 from orch.stats import Stats, Totals, build_stats
 from orch.usage import UsageReport, collect_usage
 from orch.views import (
@@ -88,6 +88,7 @@ class Context:
 #: Shown under `orch --help`. The route syntax is the one thing a reader cannot
 #: guess from a metavar, and until now it only appeared in the README.
 EPILOG = """examples:
+  orch init                           write routing.toml from the installed engines
   orch engines                        what this machine has, and how kinds route
   orch usage                          how much of each subscription is left
   orch add --repo ~/dev/app --task "update the README"
@@ -269,6 +270,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="also print a per-group breakdown table",
     )
+
+    init_parser = add("init", "write routing.toml from the engines installed here")
+    init_parser.set_defaults(func=_handle_init)
 
     engines_parser = add("engines", "show installed engines and the routing table")
     engines_parser.set_defaults(func=_handle_engines)
@@ -1129,6 +1133,20 @@ def _handle_list(args: argparse.Namespace, ctx: Context) -> None:
             for task in tasks
         ],
     )
+
+
+def _handle_init(args: argparse.Namespace, ctx: Context) -> None:
+    path = ctx.config.routing_path
+    if path.exists():
+        raise SystemExit(f"{path} already exists; edit it instead")
+    try:
+        text = render_routing_toml(probe_all(refresh=True))
+    except RoutingError as exc:
+        raise SystemExit(str(exc)) from None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    print(text)
+    print(f"wrote {path}")
 
 
 def _handle_engines(args: argparse.Namespace, ctx: Context) -> None:

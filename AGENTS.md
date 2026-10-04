@@ -9,7 +9,7 @@ server in `mcp_server.py`.
 
 ## Project structure
 
-- `src/orch/router.py` — picks the engine from the task kind. The heart of
+- `src/orch/router.py` — picks the engine from the task kind via `routing.toml`. The heart of
   the thing; change routing here, not in prompts.
 - `src/orch/workflows.py` — persists immutable Run/Batch route snapshots,
   resolves their engines and records task membership. Runs accept later tasks until
@@ -42,6 +42,7 @@ server in `mcp_server.py`.
 ```bash
 uv sync                            # install; puts `orch` in .venv/bin
 uv run pytest                      # tests
+orch init                          # write routing.toml from the installed engines
 orch engines                       # what this machine has, and the routing table
 orch usage                         # each engine's account quota and its reset
 orch install-claude-command

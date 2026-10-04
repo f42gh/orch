@@ -1,3 +1,4 @@
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -7,9 +8,11 @@ from orch.router import (
     DEFAULT_TABLE,
     AccessLevel,
     RoutingError,
+    RoutingTable,
     load_routing_table,
     resolve_access,
     resolve_engine,
+    render_routing_toml,
     resolve_policy,
 )
 
@@ -17,27 +20,44 @@ from orch.router import (
 ALL = set(Engine)
 
 
-def test_each_kind_routes_to_its_specialist() -> None:
-    assert resolve_engine(TaskKind.IMPLEMENT, ALL) == Engine.CODEX
-    assert resolve_engine(TaskKind.REFACTOR, ALL) == Engine.CODEX
-    assert resolve_engine(TaskKind.TEST, ALL) == Engine.CODEX
-    assert resolve_engine(TaskKind.REVIEW, ALL) == Engine.GROK
-    assert resolve_engine(TaskKind.INVESTIGATE, ALL) == Engine.GROK
-    assert resolve_engine(TaskKind.UI_VERIFY, ALL) == Engine.ANTIGRAVITY
+@pytest.fixture
+def table(routing_file: Path) -> RoutingTable:
+    return load_routing_table(routing_file)
 
 
-def test_missing_engine_falls_back_in_table_order() -> None:
+def test_each_kind_routes_to_its_configured_engine(table: RoutingTable) -> None:
+    assert resolve_engine(TaskKind.IMPLEMENT, ALL, table=table) == Engine.CODEX
+    assert resolve_engine(TaskKind.REVIEW, ALL, table=table) == Engine.GROK
+    assert resolve_engine(TaskKind.UI_VERIFY, ALL, table=table) == Engine.ANTIGRAVITY
+
+
+def test_missing_engine_falls_back_in_table_order(table: RoutingTable) -> None:
     without_codex = ALL - {Engine.CODEX}
-    assert resolve_engine(TaskKind.IMPLEMENT, without_codex) == Engine.CLAUDE
-    assert resolve_engine(TaskKind.REFACTOR, without_codex) == Engine.GROK
-
-    # antigravity is the flakiest engine, so ui_verify degrading to claude is the
-    # behaviour that keeps the orchestrator usable when agy is not installed.
-    assert resolve_engine(TaskKind.UI_VERIFY, {Engine.CLAUDE, Engine.CODEX}) == Engine.CLAUDE
+    assert resolve_engine(TaskKind.IMPLEMENT, without_codex, table=table) == Engine.CLAUDE
+    assert resolve_engine(TaskKind.REFACTOR, without_codex, table=table) == Engine.GROK
 
 
-def test_falls_back_to_any_installed_engine_when_table_is_exhausted() -> None:
-    assert resolve_engine(TaskKind.UI_VERIFY, {Engine.GROK}) == Engine.GROK
+def test_falls_back_to_any_installed_engine_when_table_is_exhausted(
+    table: RoutingTable,
+) -> None:
+    assert resolve_engine(TaskKind.UI_VERIFY, {Engine.GROK}, table=table) == Engine.GROK
+
+
+def test_no_routing_file_means_no_route_until_init() -> None:
+    with pytest.raises(RoutingError, match="orch init"):
+        resolve_engine(TaskKind.IMPLEMENT, ALL)
+    # An explicit engine still runs without any configuration.
+    assert resolve_engine(TaskKind.IMPLEMENT, ALL, requested=Engine.CLAUDE) == Engine.CLAUDE
+
+
+def test_init_draft_routes_every_kind_without_preferring_an_engine() -> None:
+    draft = render_routing_toml({Engine.GROK, Engine.CLAUDE})
+    parsed = tomllib.loads(draft)
+
+    assert set(parsed["kinds"]) == {kind.value for kind in TaskKind}
+    assert parsed["kinds"]["implement"] == {"engine": "claude", "fallbacks": ["grok"]}
+    with pytest.raises(RoutingError, match="no coding agent CLI"):
+        render_routing_toml(set())
 
 
 def test_no_engine_available_is_an_error() -> None:
@@ -84,7 +104,7 @@ def test_missing_routing_file_yields_the_default_table(tmp_path: Path) -> None:
     assert load_routing_table(None) is DEFAULT_TABLE
 
 
-def test_routing_file_overrides_only_what_it_mentions(tmp_path: Path) -> None:
+def test_routing_file_sets_only_what_it_mentions(tmp_path: Path) -> None:
     path = tmp_path / "routing.toml"
     path.write_text(
         """
@@ -101,8 +121,9 @@ def test_routing_file_overrides_only_what_it_mentions(tmp_path: Path) -> None:
     table = load_routing_table(path)
 
     assert resolve_engine(TaskKind.IMPLEMENT, ALL, table=table) == Engine.GROK
-    # Untouched entries keep their defaults.
-    assert resolve_engine(TaskKind.REVIEW, ALL, table=table) == Engine.GROK
+    # Kinds the file does not mention are unrouted; budgets keep their defaults.
+    with pytest.raises(RoutingError, match="no route for review"):
+        resolve_engine(TaskKind.REVIEW, ALL, table=table)
     assert resolve_policy(TaskKind.IMPLEMENT, Risk.NORMAL, Engine.GROK, table).max_turns == 5
     assert resolve_policy(TaskKind.IMPLEMENT, Risk.NORMAL, Engine.GROK, table).timeout_s == 1800
 

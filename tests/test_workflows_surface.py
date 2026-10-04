@@ -43,13 +43,13 @@ def _capability(engine: Engine) -> Capabilities:
 
 @pytest.fixture
 def workflow_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, routing_file: Path
 ) -> tuple[Config, TaskStore, Path, list[str]]:
     repo = tmp_path / "repo"
     repo.mkdir()
     config = Config(
         runtime_root=tmp_path / "runtime",
-        routing_path=tmp_path / "absent-routing.toml",
+        routing_path=routing_file,
     )
     store = TaskStore(config)
     spawned: list[str] = []

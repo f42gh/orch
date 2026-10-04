@@ -6,26 +6,22 @@ A local agent orchestrator that hands coding work to whichever agent CLI suits i
 each task in its own git worktree, and gives the result back for a human to review.
 
 Claude Code is the orchestrator. `codex`, `grok`, `agy` (Antigravity) and `claude` are
-workers, reached over an MCP server. You can choose the engine assignment for every
-Run, Batch, or single task. When you leave a kind on automatic routing, these defaults
-apply:
+workers, reached over an MCP server. Which engine handles which kind lives only in
+`routing.toml`, never in the code. Run `orch init` once: it writes a `routing.toml` that
+lists every engine found on this machine for every kind, and you reorder it to taste.
 
-| kind | automatic route | access |
-|---|---|---|
-| `implement` | codex → claude → grok | writes, inside the worktree |
-| `refactor` | codex → grok → claude | writes, inside the worktree |
-| `test` | codex → claude → grok | writes, inside the worktree |
-| `review` | grok → codex → claude | read-only |
-| `investigate` | grok → claude → codex | read-only |
-| `ui_verify` | antigravity → claude | writes, inside the worktree |
+| kind | access |
+|---|---|
+| `implement` / `refactor` / `test` / `ui_verify` | writes, inside the worktree |
+| `review` / `investigate` | read-only |
 
-In automatic mode, an exhausted chain falls back deterministically to another installed
-engine, so work can proceed as long as at least one worker CLI is available. The
+Until `routing.toml` exists, only tasks with an explicit `--engine` run. In automatic
+mode, an exhausted chain falls back deterministically to another installed engine. The
 [engine capability notes](docs/engine-capabilities.md) record what each CLI actually
 does, measured rather than taken from its documentation.
 
-These are defaults, not fixed assignments. Use the interactive `orch start`, pass an
-exact `--engine` for one task, or define a route table for a Run or Batch.
+Use the interactive `orch start`, pass an exact `--engine` for one task, or define a
+route table for a Run or Batch to override it.
 
 For a new workflow you can replace those defaults with an explicit route table. Choose
 the table once, before anything starts:
@@ -364,8 +360,9 @@ Unsandboxed access requires an explicit opt-in in `routing.toml`; nothing reache
 
 ## Tuning the routing
 
-Optional `~/.config/agent-orchestrator/routing.toml`. Only the keys present are
-overridden. This table supplies automatic defaults. A Run or Batch snapshots its
+`~/.config/agent-orchestrator/routing.toml` is written by `orch init`. Routes live only
+here: a kind the file does not mention does not run unless an engine is named. Budgets
+and deny rules override only the keys present. A Run or Batch snapshots its
 materialized routes when it is created, so later edits do not change that workflow:
 
 ```toml
