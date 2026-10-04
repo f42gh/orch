@@ -224,7 +224,7 @@ def test_spawn_worker_falls_back_to_process_signals(
             nonlocal waits
             waits += 1
             if waits == 1:
-                raise subprocess.TimeoutExpired("agentd", timeout)
+                raise subprocess.TimeoutExpired("orch", timeout)
             return 0
 
         def terminate(self) -> None:
