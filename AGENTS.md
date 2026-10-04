@@ -42,7 +42,7 @@ server in `mcp_server.py`.
 ```bash
 uv sync                            # install; puts `orch` in .venv/bin
 uv run pytest                      # tests
-orch init                          # write routing.toml from the installed engines
+orch init                          # write routing.toml; on a TTY, asks each kind's order
 orch engines                       # what this machine has, and the routing table
 orch usage                         # each engine's account quota and its reset
 orch install-claude-command

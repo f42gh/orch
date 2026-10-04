@@ -12,6 +12,7 @@ from orch.router import (
     load_routing_table,
     resolve_access,
     resolve_engine,
+    default_chain,
     render_routing_toml,
     resolve_policy,
 )
@@ -51,13 +52,13 @@ def test_no_routing_file_means_no_route_until_init() -> None:
 
 
 def test_init_draft_routes_every_kind_without_preferring_an_engine() -> None:
-    draft = render_routing_toml({Engine.GROK, Engine.CLAUDE})
-    parsed = tomllib.loads(draft)
+    chain = default_chain({Engine.GROK, Engine.CLAUDE})
+    draft = tomllib.loads(render_routing_toml({kind: chain for kind in TaskKind}))
 
-    assert set(parsed["kinds"]) == {kind.value for kind in TaskKind}
-    assert parsed["kinds"]["implement"] == {"engine": "claude", "fallbacks": ["grok"]}
+    assert set(draft["kinds"]) == {kind.value for kind in TaskKind}
+    assert draft["kinds"]["implement"] == {"engine": "claude", "fallbacks": ["grok"]}
     with pytest.raises(RoutingError, match="no coding agent CLI"):
-        render_routing_toml(set())
+        default_chain(set())
 
 
 def test_no_engine_available_is_an_error() -> None:

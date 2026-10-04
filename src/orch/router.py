@@ -11,7 +11,7 @@ import tomllib
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Sequence
 
 from orch.models import (
     WRITING_KINDS,
@@ -157,19 +157,27 @@ def load_routing_table(path: Path | None) -> RoutingTable:
     )
 
 
-def render_routing_toml(engines: Iterable[Engine]) -> str:
-    """Draft a routing.toml that sends every kind to the installed engines.
-
-    No engine is preferred: they are listed alphabetically, the same order the
-    any-installed rescue uses, and the user reorders them per kind.
+def default_chain(engines: Iterable[Engine]) -> tuple[Engine, ...]:
+    """Every installed engine, alphabetically: the same order the any-installed rescue
+    uses, so the draft `orch init` offers prefers no engine.
     """
-    names = sorted(engine.value for engine in engines)
-    if not names:
+    chain = tuple(sorted(engines, key=lambda engine: engine.value))
+    if not chain:
         raise RoutingError("no coding agent CLI is available on this machine")
+    return chain
+
+
+def render_routing_toml(chains: Mapping[TaskKind, Sequence[Engine]]) -> str:
+    """Render one `[kinds.*]` table per kind: the first engine is the primary."""
     lines: list[str] = []
-    for kind in TaskKind:
-        fallbacks = ", ".join(f'"{name}"' for name in names[1:])
-        lines += [f"[kinds.{kind.value}]", f'engine = "{names[0]}"', f"fallbacks = [{fallbacks}]", ""]
+    for kind, chain in chains.items():
+        fallbacks = ", ".join(f'"{engine.value}"' for engine in chain[1:])
+        lines += [
+            f"[kinds.{kind.value}]",
+            f'engine = "{chain[0].value}"',
+            f"fallbacks = [{fallbacks}]",
+            "",
+        ]
     return "\n".join(lines)
 
 

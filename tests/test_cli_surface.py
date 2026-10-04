@@ -8,16 +8,18 @@ ended up without `--json`.
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 
 import pytest
 
-from orch.cli import main
+from orch.cli import init_chains, main
 from orch.config import Config
 from orch.db import TaskStore
 from orch.engines.base import Capabilities
-from orch.models import Engine
+from orch.models import Engine, TaskKind
+from orch.workflows import WorkflowError
 
 
 def _capability(engine: Engine) -> Capabilities:
@@ -326,3 +328,14 @@ def test_the_cli_imports_without_the_optional_extras(monkeypatch: pytest.MonkeyP
         monkeypatch.setitem(sys.modules, module, None)
 
     assert build_parser().parse_args(["mcp"]).command == "mcp"
+
+
+def test_init_asks_each_kind_and_enter_keeps_the_installed_order() -> None:
+    installed = (Engine.CLAUDE, Engine.CODEX)
+    answers = io.StringIO("codex, agy\n" + "\n" * (len(TaskKind) - 1))
+    chains = init_chains(installed, stdin=answers, prompt_output=io.StringIO())
+
+    assert chains[TaskKind.IMPLEMENT] == (Engine.CODEX, Engine.ANTIGRAVITY)
+    assert chains[TaskKind.REVIEW] == installed
+    with pytest.raises(WorkflowError, match="twice"):
+        init_chains(installed, stdin=io.StringIO("codex,codex\n"), prompt_output=io.StringIO())

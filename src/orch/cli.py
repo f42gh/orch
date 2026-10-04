@@ -41,7 +41,12 @@ from orch.parsing import (
     require_engine,
     route_overrides_from_flags,
 )
-from orch.router import RoutingError, load_routing_table, render_routing_toml
+from orch.router import (
+    RoutingError,
+    default_chain,
+    load_routing_table,
+    render_routing_toml,
+)
 from orch.stats import Stats, Totals, build_stats
 from orch.usage import UsageReport, collect_usage
 from orch.views import (
@@ -1140,13 +1145,35 @@ def _handle_init(args: argparse.Namespace, ctx: Context) -> None:
     if path.exists():
         raise SystemExit(f"{path} already exists; edit it instead")
     try:
-        text = render_routing_toml(probe_all(refresh=True))
-    except RoutingError as exc:
+        chain = default_chain(probe_all(refresh=True))
+        if sys.stdin.isatty():
+            chains = init_chains(chain, stdin=sys.stdin, prompt_output=sys.stderr)
+        else:
+            chains = {kind: chain for kind in TaskKind}
+    except (RoutingError, WorkflowError) as exc:
         raise SystemExit(str(exc)) from None
+    text = render_routing_toml(chains)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
     print(text)
     print(f"wrote {path}")
+
+
+def init_chains(
+    installed: tuple[Engine, ...], *, stdin: TextIO, prompt_output: TextIO
+) -> dict[TaskKind, tuple[Engine, ...]]:
+    """Ask for each kind's engine order; Enter keeps the installed order."""
+    default = ",".join(engine.value for engine in installed)
+    chains: dict[TaskKind, tuple[Engine, ...]] = {}
+    for kind in TaskKind:
+        raw = _prompt(kind.value, default=default, stdin=stdin, prompt_output=prompt_output)
+        chain = tuple(require_engine(name) for name in raw.split(",") if name.strip())
+        if not chain:
+            raise WorkflowError(f"{kind.value}: name at least one engine")
+        if len(set(chain)) != len(chain):
+            raise WorkflowError(f"{kind.value}: an engine is listed twice")
+        chains[kind] = chain
+    return chains
 
 
 def _handle_engines(args: argparse.Namespace, ctx: Context) -> None:
