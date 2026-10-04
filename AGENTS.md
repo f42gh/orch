@@ -31,12 +31,11 @@ server in `mcp_server.py`.
   JSON payloads. Both are used by `cli.py` and `mcp_server.py`; adding a rule or a
   field to one of them reaches both. Do not reintroduce a local copy.
 - `src/orch/db.py` — SQLite, the single source of truth shared by the MCP
-  server, the daemon, the CLI and the React UI.
+  server, the daemon and the CLI.
 - `src/orch/stats.py` — pure aggregation over tasks: cost, tokens, engine
   time, diff size. No database, no git, no filesystem; filtering belongs in `list_tasks`.
 - `docs/engine-capabilities.md` — what each CLI *actually* does, measured. Read it before
   touching an adapter.
-- `ui/` — Deno + React front end for the local API.
 
 ## Commands
 
@@ -54,13 +53,11 @@ orch batch dispatch --repo <path> --route implement=codex --tasks-file tasks.jso
 orch stats --group-by engine       # cost, tokens, engine time, diff size
 orch daemon run-task <id>          # run one task
 orch daemon run --max-concurrency 2
-orch api                           # local HTTP API on 127.0.0.1:8765
 orch mcp                           # MCP server over stdio
 ```
 
-`orch` is the whole surface. `agentctl`, `agentd`, `agentapi` and `agentmcp` remain as
-aliases: `agentmcp` because existing `claude mcp add` registrations invoke it by name;
-the rest keep older documented commands working. New code and new docs use `orch`.
+`orch` is the whole surface. `agentmcp` remains as an alias because existing
+`claude mcp add` registrations invoke it by name. New code and new docs use `orch`.
 
 Run `uv run pytest` before submitting changes.
 

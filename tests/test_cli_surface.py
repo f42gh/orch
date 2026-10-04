@@ -285,9 +285,6 @@ def test_orch_mounts_the_daemon_api_and_mcp_commands() -> None:
     assert daemon.daemon_command == "run"
     assert daemon.max_concurrency == 3
     assert parser.parse_args(["daemon", "run-task", "task-0001"]).task_id == "task-0001"
-    # No `run` subcommand: unlike daemon, api has one action, same as mcp.
-    api = parser.parse_args(["api", "--port", "9000"])
-    assert api.port == 9000 and api.host == "127.0.0.1"
     assert parser.parse_args(["mcp"]).routing is None
 
 
@@ -307,8 +304,8 @@ def test_daemon_runtime_root_survives_the_umbrella_parser() -> None:
     )
 
 
-def test_agentd_is_the_same_parser_as_orch_daemon() -> None:
-    """`agentd` is an alias, not a second implementation — the earlier copy had drifted."""
+def test_module_entry_is_the_same_parser_as_orch_daemon() -> None:
+    """`python -m orch.daemon` reuses the parser, not a copy — the earlier copy had drifted."""
     from orch import daemon
 
     standalone = daemon.build_parser().parse_args(["run", "--once"])
@@ -320,12 +317,12 @@ def test_agentd_is_the_same_parser_as_orch_daemon() -> None:
 
 
 def test_the_cli_imports_without_the_optional_extras(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`orch --help` must work on an install that took neither the api nor mcp extra."""
+    """`orch --help` must work on an install that did not take the mcp extra."""
     import sys
 
     from orch.cli import build_parser
 
-    for module in ("fastapi", "uvicorn", "mcp", "mcp.server"):
+    for module in ("mcp", "mcp.server"):
         monkeypatch.setitem(sys.modules, module, None)
 
     assert build_parser().parse_args(["mcp"]).command == "mcp"

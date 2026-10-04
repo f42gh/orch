@@ -170,10 +170,6 @@ class TaskStore:
             added.append(column)
         return added
 
-    def next_task_id(self) -> str:
-        with self._conn() as conn:
-            return _next_task_id(conn)
-
     def add_task(
         self,
         repo_path: Path,
@@ -258,15 +254,6 @@ class TaskStore:
                 f"SELECT tasks.* FROM tasks{join}{where} ORDER BY created_at ASC", values
             ).fetchall()
         return [row_to_task(row) for row in rows]
-
-    def next_queued_task(self) -> Task | None:
-        """Peek at the head of the queue without claiming it."""
-        with self._conn() as conn:
-            row = conn.execute(
-                f"SELECT * FROM tasks WHERE status = ? ORDER BY {PRIORITY_ORDER_SQL} LIMIT 1",
-                (TaskStatus.QUEUED.value,),
-            ).fetchone()
-        return row_to_task(row) if row else None
 
     def claim_next_task(self) -> Task | None:
         """Atomically move the head of the queue to running and return it.
@@ -427,42 +414,6 @@ class TaskStore:
                 f"SELECT * FROM workflows{where} ORDER BY created_at, id", values
             ).fetchall()
         return [row_to_workflow(row) for row in rows]
-
-    def get_workflow_routes(self, workflow_id: str) -> tuple[WorkflowRoute, ...]:
-        with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM workflow_routes WHERE workflow_id = ?",
-                (workflow_id,),
-            ).fetchall()
-        by_kind = {TaskKind(row["kind"]): row_to_workflow_route(row) for row in rows}
-        return tuple(by_kind[kind] for kind in TaskKind if kind in by_kind)
-
-    def get_workflow_memberships(self, workflow_id: str) -> tuple[WorkflowTask, ...]:
-        with self._conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT workflow_id, task_id, ordinal FROM workflow_tasks
-                WHERE workflow_id = ? ORDER BY ordinal
-                """,
-                (workflow_id,),
-            ).fetchall()
-        return tuple(
-            WorkflowTask(row["workflow_id"], row["task_id"], row["ordinal"])
-            for row in rows
-        )
-
-    def get_workflow_tasks(self, workflow_id: str) -> tuple[Task, ...]:
-        with self._conn() as conn:
-            rows = conn.execute(
-                """
-                SELECT tasks.* FROM workflow_tasks
-                JOIN tasks ON tasks.id = workflow_tasks.task_id
-                WHERE workflow_tasks.workflow_id = ?
-                ORDER BY workflow_tasks.ordinal
-                """,
-                (workflow_id,),
-            ).fetchall()
-        return tuple(row_to_task(row) for row in rows)
 
     def get_workflow_details(self, workflow_id: str) -> WorkflowDetails | None:
         # A show response should describe one database instant even while other

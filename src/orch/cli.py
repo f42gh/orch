@@ -180,8 +180,8 @@ def _add_route_arguments(parser: argparse.ArgumentParser) -> None:
 def _runtime_root_parent() -> argparse.ArgumentParser:
     """`--runtime-root` after the subcommand as well as before it.
 
-    `agentd` and `agentapi` take it after their subcommand, so `orch` accepting it
-    only before one was a difference nobody chose. The default is SUPPRESS rather than
+    The daemon subcommands take it after themselves, so `orch` accepting it only
+    before a subcommand was a difference nobody chose. The default is SUPPRESS rather than
     None: an argparse subparser writes its defaults over values the main parser already
     set, so a plain default here would erase `orch --runtime-root X list`.
     """
@@ -198,8 +198,6 @@ def _runtime_root_parent() -> argparse.ArgumentParser:
 
 def build_parser() -> argparse.ArgumentParser:
     runtime_root = _runtime_root_parent()
-    # No prog=: the same parser is reached as `orch` and as the `agentctl` alias, and
-    # the usage line should name whichever the user actually typed.
     parser = argparse.ArgumentParser(
         description="Hand coding work to another agent CLI and review what comes back.",
         epilog=EPILOG,
@@ -350,22 +348,10 @@ def build_parser() -> argparse.ArgumentParser:
     daemon_parser.set_defaults(func=_handle_daemon)
     add_daemon_arguments(daemon_parser)
 
-    # `api` and `mcp` declare their flags here rather than importing them from the
-    # modules that implement them: those modules import fastapi and mcp at the top, and
-    # both are optional extras. Sharing the definitions would make `orch --help` fail on
-    # an install that only wanted the CLI. The handlers import lazily for the same reason.
-    # No `run` subcommand: unlike daemon, api has one action, same as mcp. The
-    # standalone `agentapi run` alias keeps `run` because that binary's whole
-    # surface is the server.
-    api_parser = add("api", "serve the local HTTP API the React UI reads")
-    api_parser.set_defaults(func=_handle_api)
-    api_parser.add_argument(
-        "--host", default="127.0.0.1", metavar="ADDR", help="bind address (default: 127.0.0.1)"
-    )
-    api_parser.add_argument(
-        "--port", type=int, default=8765, metavar="PORT", help="bind port (default: 8765)"
-    )
-
+    # `mcp` declares its flags here rather than importing them from mcp_server: that
+    # module imports mcp at the top, an optional extra. Sharing the definitions would make
+    # `orch --help` fail on an install that only wanted the CLI. The handler imports
+    # lazily for the same reason.
     mcp_parser = add("mcp", "serve the MCP control plane over stdio")
     mcp_parser.set_defaults(func=_handle_mcp)
     mcp_parser.add_argument(
@@ -1224,12 +1210,6 @@ def _handle_show(args: argparse.Namespace, ctx: Context) -> None:
 
 def _handle_daemon(args: argparse.Namespace, ctx: Context) -> None:
     run_daemon_command(args)
-
-
-def _handle_api(args: argparse.Namespace, ctx: Context) -> None:
-    from orch import api
-
-    api.run(args)
 
 
 def _handle_mcp(args: argparse.Namespace, ctx: Context) -> None:

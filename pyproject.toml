@@ -7,34 +7,20 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
-api = [
-  "fastapi>=0.125",
-  "uvicorn>=0.38",
-]
-claude = [
-  "claude-code-sdk>=0.0.25",
-]
 mcp = [
   "mcp>=2.0",
 ]
 
 [dependency-groups]
 dev = [
-  "fastapi>=0.125",
   "mcp>=2.0",
-  "httpx>=0.28",
   "pytest>=8.0",
-  "uvicorn>=0.38",
   "pytest-asyncio>=1.4.0",
 ]
 
 [project.scripts]
 orch = "orch.cli:main"
-# Aliases. `agentmcp` is what existing `claude mcp add` registrations invoke.
-# The rest keep documented commands from earlier versions working.
-agentctl = "orch.cli:main"
-agentd = "orch.daemon:main"
-agentapi = "orch.api:main"
+# Alias: existing `claude mcp add` registrations invoke `agentmcp` by name.
 agentmcp = "orch.mcp_server:main"
 
 [build-system]

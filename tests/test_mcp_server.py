@@ -16,7 +16,7 @@ import pytest
 from orch.config import Config
 from orch.db import TaskStore
 from orch.mcp_server import MAX_WAIT_S, DispatchError, build_server, wait_budget
-from orch.models import Engine, Priority, Risk, TaskKind, TaskStatus
+from orch.models import Engine, TaskKind, TaskStatus
 
 
 def init_repo(path: Path) -> None:

@@ -72,27 +72,3 @@ def create_workspace(
             result.stderr.strip() or result.stdout.strip() or "git worktree add failed"
         )
     return workspace, branch
-
-
-def remove_workspace(
-    config: Config,
-    task_id: str,
-    repo_path: Path,
-    branch_name: str | None = None,
-    delete_branch: bool = False,
-) -> None:
-    """Tear a worktree down. Parallel dispatch accumulates these quickly.
-
-    Deleting the branch is opt-in because the branch is the only place the work
-    survives once the worktree is gone.
-    """
-    repo = repo_path.expanduser().resolve()
-    workspace = workspace_path_for_task(config, task_id)
-    if workspace.exists():
-        result = _git(repo, "worktree", "remove", "--force", str(workspace))
-        if result.returncode != 0:
-            raise WorkspaceError(result.stderr.strip() or "git worktree remove failed")
-    _git(repo, "worktree", "prune")
-
-    if delete_branch and branch_name:
-        _git(repo, "branch", "-D", branch_name)

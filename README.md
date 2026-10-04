@@ -49,7 +49,7 @@ Run が保存するのはルートとタスク履歴であり、あるタスク�
 git clone https://github.com/f42gh/orch
 cd orch
 uv sync                      # .venv/bin に orch を作る
-uv tool install -e ".[mcp,api]"   # PATH に通す（-e なので編集は即反映）
+uv tool install -e ".[mcp]"       # PATH に通す（-e なので編集は即反映）
 orch engines                 # このマシンにあるエンジンとルーティングテーブルを表示
 ```
 
@@ -64,11 +64,9 @@ orch engines                 # このマシンにあるエンジンとルーテ�
 | `orch run` / `batch` / `start` | Run・Batch ワークフロー |
 | `orch stats` / `usage` / `engines` | 集計と環境確認 |
 | `orch daemon run` | キューを消化するワーカー |
-| `orch api` | ローカル HTTP API（UI 用） |
 | `orch mcp` | MCP サーバー（stdio） |
 
-旧名の `agentctl` / `agentd` / `agentapi` / `agentmcp` もエイリアスとして残っているため、
-既存の登録やスクリプトはそのまま動く。
+旧名の `agentmcp` もエイリアスとして残っているため、既存の MCP 登録はそのまま動く。
 
 各 CLI のインストールと認証はそれぞれ個別に必要。このツールが認証情報を保存することはない。
 
@@ -326,22 +324,6 @@ note: antigravity agy reports no quota: its JSON result carries tokens only, …
 完了したタスクは `succeeded` ではなく必ず `needs_review` になる — 自分の成果物を自分で
 完了扱いにするものはいない。`result.json` には、要約、レビューの場合は構造化された指摘、
 変更ファイル、diffstat、トークン使用量、エンジンが報告する場合はコスト、警告が入る。
-
-## Legacy HTTP API と UI
-
-HTTP API と React UI は、従来の単一タスクワークフロー用として引き続き利用できる。
-Run と Batch の作成・管理には対応しないため、新しいワークフローのオーケストレーションには
-MCP ツールまたは `orch` を使う。
-
-```bash
-uv sync --extra api
-orch api                # 127.0.0.1:8765
-cd ui && deno task dev
-```
-
-ワークフロー内のタスクが通常の flat task として表示されることはあるが、workflow ID、route
-snapshot、Run の close、Batch の seal は管理しない。すべてのプロセスで同じ runtime root を
-指定する。フロントエンドの詳細は [UI README](ui/README.md) を参照。
 
 ## リスクとアクセス制御
 

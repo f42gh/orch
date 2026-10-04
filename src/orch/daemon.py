@@ -105,9 +105,9 @@ async def run_daemon(
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     """Populate a parser with the daemon's own commands.
 
-    Mounted twice: as `orch daemon` and as the whole of `agentd`. Defined once so the
-    two cannot drift — an earlier `orch daemon` was a hand-copied second version of
-    this and had already lost track of DEFAULT_CONCURRENCY.
+    Mounted twice: as `orch daemon` and as `python -m orch.daemon`, which dispatch
+    spawns. Defined once so the two cannot drift — an earlier `orch daemon` was a
+    hand-copied second version of this and had already lost track of DEFAULT_CONCURRENCY.
     """
     subparsers = parser.add_subparsers(dest="daemon_command", required=True)
 
@@ -137,7 +137,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    """Execute a parsed daemon command. Shared by `orch daemon` and `agentd`."""
+    """Execute a parsed daemon command. Shared by `orch daemon` and `python -m orch.daemon`."""
     config: Config = load_config(getattr(args, "runtime_root", None))
     store = TaskStore(config)
 
@@ -162,9 +162,7 @@ def run(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="agentd", description="Deprecated alias for `orch daemon`."
-    )
+    parser = argparse.ArgumentParser(prog="orch daemon")
     add_arguments(parser)
     return parser
 

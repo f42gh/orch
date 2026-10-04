@@ -22,7 +22,6 @@ from orch.prompts import build_prompt, schema_for
 from orch.result import DiffStat, diff_numstat, save_git_diff, write_result_json
 from orch.router import (
     EnginePolicy,
-    RoutingTable,
     load_routing_table,
     resolve_policy,
 )
@@ -282,13 +281,3 @@ def _terminate(process: subprocess.Popen[str]) -> None:
     except (ProcessLookupError, PermissionError, OSError):
         process.kill()
     process.poll()
-
-
-def engine_for(task: Task) -> Engine:
-    if task.engine is None:
-        raise WorkerError(f"task {task.id} has no engine assigned")
-    return task.engine
-
-
-def routing_table_for(config: Config) -> RoutingTable:
-    return load_routing_table(config.routing_path)

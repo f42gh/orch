@@ -11,10 +11,7 @@ __pycache__/
 .runtime-smoke/
 .runtime-api-smoke/
 
-# UI (Deno-managed; deno.lock is the lockfile)
-node_modules/
 dist/
-ui/pnpm-lock.yaml
 
 # Local tool settings
 .claude/settings.local.json

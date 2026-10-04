@@ -7,7 +7,7 @@ It deliberately does no work itself. `orch_dispatch` writes a row and spawns a d
 
 - a tool call never blocks Claude for the 30 minutes a real task can take,
 - work survives the Claude session exiting, since the worker is not a child of it,
-- `orch`, the HTTP API and the React UI all see the same tasks, because SQLite
+- `orch` and the daemon see the same tasks, because SQLite
   stays the single source of truth.
 
 Nothing here may print to stdout: that is the MCP transport.

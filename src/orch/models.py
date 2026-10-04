@@ -190,11 +190,6 @@ class Workflow:
     def is_open(self) -> bool:
         return self.status is WorkflowStatus.OPEN
 
-    @property
-    def is_sealed(self) -> bool:
-        return self.status is WorkflowStatus.SEALED
-
-
 @dataclass(frozen=True, slots=True)
 class WorkflowTask:
     workflow_id: str

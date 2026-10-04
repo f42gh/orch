@@ -1,4 +1,4 @@
-"""Local task orchestrator for isolated Claude Agent SDK workers."""
+"""Hand coding tasks to agent CLIs in isolated git worktrees."""
 
 __all__ = ["__version__"]
 

@@ -321,14 +321,6 @@ def _parse_enum[T: StrEnum](enum: type[T], value: object, where: str) -> T:
         raise RoutingError(f"{where}: {value!r} is not one of {allowed}") from None
 
 
-def resolve_worker_mode(risk: Risk) -> str:
-    if risk == Risk.READ_ONLY:
-        return "read-only worker"
-    if risk == Risk.HIGH:
-        return "planning-only worker"
-    return "coding worker"
-
-
 def resolve_allowed_tools(risk: Risk) -> list[str]:
     if risk == Risk.READ_ONLY:
         return ["Read", "Grep", "Glob", "Bash"]

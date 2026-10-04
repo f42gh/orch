@@ -52,7 +52,7 @@ worker CLI. Claude Code is required only for the MCP-driven workflow.
 git clone https://github.com/f42gh/orch
 cd orch
 uv sync                           # creates .venv/bin/orch
-uv tool install -e ".[mcp,api]"   # puts it on PATH; -e keeps it live against this checkout
+uv tool install -e ".[mcp]"       # puts it on PATH; -e keeps it live against this checkout
 orch engines                      # what this machine has, and the routing table
 ```
 
@@ -67,11 +67,9 @@ Everything is under the one `orch` command:
 | `orch run` / `batch` / `start` | Run and Batch workflows |
 | `orch stats` / `usage` / `engines` | aggregates and what this machine has |
 | `orch daemon run` | the worker that drains the queue |
-| `orch api` | local HTTP API for the UI |
 | `orch mcp` | MCP server over stdio |
 
-The older `agentctl`, `agentd`, `agentapi` and `agentmcp` names remain as aliases, so
-existing registrations and scripts keep working.
+The older `agentmcp` name remains as an alias, so existing MCP registrations keep working.
 
 Each CLI needs to be installed and authenticated on its own. Nothing here stores
 credentials.
@@ -344,22 +342,6 @@ Override with `--runtime-root` or `AGENT_ORCHESTRATOR_RUNTIME_ROOT`.
 A finished task lands in `needs_review`, never `succeeded` — nothing marks its own work
 as done. `result.json` carries the summary, structured findings for reviews, changed
 files, diffstat, token usage, cost where the engine reports it, and warnings.
-
-## Legacy HTTP API and UI
-
-The HTTP API and React UI remain available for the original single-task workflow. They
-do not create or manage Runs and Batches; use the MCP tools or `orch` for new
-workflow orchestration.
-
-```bash
-uv sync --extra api
-orch api                # 127.0.0.1:8765
-cd ui && deno task dev
-```
-
-Workflow member tasks can appear as ordinary flat tasks, but the API and UI do not
-manage workflow IDs, route snapshots, Run closing or Batch sealing. Point every process
-at the same runtime root. See the [UI README](ui/README.md) for frontend setup.
 
 ## Risk and access
 

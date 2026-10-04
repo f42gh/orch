@@ -19,7 +19,7 @@ import pytest
 from orch.config import Config
 from orch.db import TaskStore
 from orch.engines.base import Capabilities, EngineResult, RunSpec
-from orch.models import Engine, Priority, Risk, Task, TaskKind, TaskStatus, TokenUsage
+from orch.models import Engine, Priority, Risk, Task, TaskStatus, TokenUsage
 from orch.worker import _spawn, run_task
 
 
