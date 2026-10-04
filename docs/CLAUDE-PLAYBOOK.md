@@ -40,9 +40,10 @@ Do not dispatch while any of those choices is implicit.
 
 ## Kinds and route safety
 
-When a route is not specified, `kind` is looked up in `routing.toml`, which `orch init`
-writes; `orch_engines` shows the current table. An empty table means the file is missing:
-ask the user to run `orch init`, or name the engine.
+When a route is not specified, `kind` is looked up in `routing.toml`; `orch_engines`
+shows the current table. If a kind you need is missing, ask the user how they want work
+split across the installed engines, then call `orch_routing_set`. With no preference,
+route every kind to every installed engine.
 
 | kind | use it when |
 |---|---|

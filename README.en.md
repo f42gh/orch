@@ -7,8 +7,10 @@ each task in its own git worktree, and gives the result back for a human to revi
 
 Claude Code is the orchestrator. `codex`, `grok`, `agy` (Antigravity) and `claude` are
 workers, reached over an MCP server. Which engine handles which kind lives only in
-`routing.toml`, never in the code. Run `orch init` once: it writes a `routing.toml` that
-lists every engine found on this machine for every kind, and you reorder it to taste.
+`routing.toml`, never in the code. The first time you use `/orch`, Claude Code checks the
+installed engines, asks how you want work split, and writes the table with
+`orch_routing_set`; with no preference, every kind goes to every installed engine.
+Without Claude Code, `orch init` writes that same default.
 
 | kind | access |
 |---|---|
@@ -358,7 +360,7 @@ Unsandboxed access requires an explicit opt-in in `routing.toml`; nothing reache
 
 ## Tuning the routing
 
-`~/.config/orch/routing.toml` is written by `orch init`. Routes live only
+`~/.config/orch/routing.toml` is written by `orch_routing_set` or `orch init`. Routes live only
 here: a kind the file does not mention does not run unless an engine is named. Budgets
 and deny rules override only the keys present. A Run or Batch snapshots its
 materialized routes when it is created, so later edits do not change that workflow:

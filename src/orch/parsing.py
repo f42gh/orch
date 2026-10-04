@@ -71,6 +71,14 @@ def require_engine(value: str) -> Engine:
     return engine
 
 
+def parse_chains(routes: Mapping[str, Sequence[str]]) -> dict[TaskKind, tuple[Engine, ...]]:
+    """`{"implement": ["codex", "claude"]}` → ordered engine chains per kind."""
+    return {
+        parse_kind(kind): tuple(require_engine(name) for name in chain)
+        for kind, chain in routes.items()
+    }
+
+
 def parse_kind(value: str) -> TaskKind:
     try:
         return TaskKind(value.strip())

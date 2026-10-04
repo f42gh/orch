@@ -181,11 +181,51 @@ def render_routing_toml(chains: Mapping[TaskKind, Sequence[Engine]]) -> str:
     return "\n".join(lines)
 
 
+def write_routes(path: Path, chains: Mapping[TaskKind, Sequence[Engine]]) -> RoutingTable:
+    """Set the given kinds' engine chains in routing.toml, leaving the rest alone.
+
+    Only `[kinds.*]` tables are rewritten; budgets, deny rules and the per-engine
+    `allow_dangerous` opt-in are carried over as text, so setting routes can never
+    grant or revoke dangerous access.
+    """
+    for kind, chain in chains.items():
+        if not chain:
+            raise RoutingError(f"{kind.value}: name at least one engine")
+        if len(set(chain)) != len(chain):
+            raise RoutingError(f"{kind.value}: an engine is listed twice")
+    current = load_routing_table(path)
+    merged = {kind: (route.engine, *route.fallbacks) for kind, route in current.routes.items()}
+    merged.update(chains)
+
+    kept: list[str] = []
+    in_kinds = False
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    for line in text.splitlines():
+        if line.lstrip().startswith("["):
+            in_kinds = line.lstrip().startswith("[kinds")
+        if not in_kinds:
+            kept.append(line)
+    ordered = {kind: merged[kind] for kind in TaskKind if kind in merged}
+    body = "\n".join(kept).strip()
+    new_text = (body + "\n\n" if body else "") + render_routing_toml(ordered)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staging = path.with_suffix(".toml.tmp")
+    staging.write_text(new_text, encoding="utf-8")
+    try:
+        table = load_routing_table(staging)
+    except (RoutingError, tomllib.TOMLDecodeError):
+        staging.unlink()
+        raise
+    staging.replace(path)
+    return table
+
+
 def configured_route(table: RoutingTable, kind: TaskKind) -> EngineRoute:
     route = table.routes.get(kind)
     if route is None:
         raise RoutingError(
-            f"no route for {kind.value}: run `orch init` to write routing.toml, "
+            f"no route for {kind.value}: set one with orch_routing_set (or `orch init`), "
             "or pass an engine explicitly"
         )
     return route

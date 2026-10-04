@@ -45,7 +45,7 @@ from orch.router import (
     RoutingError,
     default_chain,
     load_routing_table,
-    render_routing_toml,
+    write_routes,
 )
 from orch.stats import Stats, Totals, build_stats
 from orch.usage import UsageReport, collect_usage
@@ -276,7 +276,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="also print a per-group breakdown table",
     )
 
-    init_parser = add("init", "write routing.toml from the engines installed here")
+    init_parser = add("init", "route unrouted kinds to every installed engine")
     init_parser.set_defaults(func=_handle_init)
 
     engines_parser = add("engines", "show installed engines and the routing table")
@@ -1141,47 +1141,20 @@ def _handle_list(args: argparse.Namespace, ctx: Context) -> None:
 
 
 def _handle_init(args: argparse.Namespace, ctx: Context) -> None:
+    """Route every unrouted kind to all detected engines. Choosing per kind is the
+    orchestrating agent's job (orch_routing_set), after asking the user."""
     path = ctx.config.routing_path
-    if path.exists():
-        raise SystemExit(f"{path} already exists; edit it instead")
     try:
         chain = default_chain(probe_all(refresh=True))
-        if sys.stdin.isatty():
-            chains = init_chains(chain, stdin=sys.stdin, prompt_output=sys.stderr)
-        else:
-            chains = {kind: chain for kind in TaskKind}
-    except (RoutingError, WorkflowError) as exc:
+        current = load_routing_table(path)
+        table = write_routes(
+            path, {kind: chain for kind in TaskKind if kind not in current.routes}
+        )
+    except RoutingError as exc:
         raise SystemExit(str(exc)) from None
-    text = render_routing_toml(chains)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
-    print(text)
+    for entry in table.describe():
+        print(f"{entry['kind']}: {' -> '.join([entry['engine'], *entry['fallbacks']])}")  # type: ignore[list-item]
     print(f"wrote {path}")
-
-
-def init_chains(
-    installed: tuple[Engine, ...], *, stdin: TextIO, prompt_output: TextIO
-) -> dict[TaskKind, tuple[Engine, ...]]:
-    """Offer the detected engines for every kind, or ask each kind's order."""
-    default = ",".join(engine.value for engine in installed)
-    print(f"Detected engines: {default}", file=prompt_output)
-    if not _prompt_yes_no(
-        "Set the engine order per kind now? (n: use the detected engines for every kind)",
-        default=False,
-        stdin=stdin,
-        prompt_output=prompt_output,
-    ):
-        return {kind: installed for kind in TaskKind}
-    chains: dict[TaskKind, tuple[Engine, ...]] = {}
-    for kind in TaskKind:
-        raw = _prompt(kind.value, default=default, stdin=stdin, prompt_output=prompt_output)
-        chain = tuple(require_engine(name) for name in raw.split(",") if name.strip())
-        if not chain:
-            raise WorkflowError(f"{kind.value}: name at least one engine")
-        if len(set(chain)) != len(chain):
-            raise WorkflowError(f"{kind.value}: an engine is listed twice")
-        chains[kind] = chain
-    return chains
 
 
 def _handle_engines(args: argparse.Namespace, ctx: Context) -> None:

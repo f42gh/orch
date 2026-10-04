@@ -5,6 +5,7 @@ from orch.command_installer import command_template
 
 REQUIRED_TOOLS = (
     "orch_engines",
+    "orch_routing_set",
     "orch_dispatch",
     "orch_run_create",
     "orch_run_dispatch",

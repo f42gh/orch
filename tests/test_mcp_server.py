@@ -150,6 +150,20 @@ def test_engines_reports_the_routing_table(env) -> None:
     assert routing["review"] == "grok"
 
 
+def test_routing_set_changes_only_the_named_kinds(env) -> None:
+    config, _, _ = env
+    server = build_server(config)
+
+    result = tool(server, "orch_routing_set")({"review": ["agy", "claude"]})
+
+    routing = {entry["kind"]: entry for entry in result["routing"]}
+    assert routing["review"]["engine"] == "antigravity"
+    assert routing["review"]["fallbacks"] == ["claude"]
+    assert routing["implement"]["engine"] == "codex"
+    with pytest.raises(DispatchError, match="twice"):
+        tool(server, "orch_routing_set")({"review": ["codex", "codex"]})
+
+
 async def test_wait_returns_finished_tasks_and_reports_the_rest(env) -> None:
     config, repo, _ = env
     server = build_server(config)

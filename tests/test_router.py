@@ -12,9 +12,11 @@ from orch.router import (
     load_routing_table,
     resolve_access,
     resolve_engine,
+    EngineRoute,
     default_chain,
     render_routing_toml,
     resolve_policy,
+    write_routes,
 )
 
 
@@ -59,6 +61,37 @@ def test_init_draft_routes_every_kind_without_preferring_an_engine() -> None:
     assert draft["kinds"]["implement"] == {"engine": "claude", "fallbacks": ["grok"]}
     with pytest.raises(RoutingError, match="no coding agent CLI"):
         default_chain(set())
+
+
+def test_writing_routes_keeps_the_dangerous_opt_in_and_budgets(tmp_path: Path) -> None:
+    path = tmp_path / "routing.toml"
+    path.write_text(
+        """deny_rules = ["Bash(git push:*)"]
+
+[kinds.implement]
+engine = "codex"
+
+[engines.codex]
+allow_dangerous = true
+
+[kinds.review]
+engine = "grok"
+
+[risk.normal]
+max_turns = 5
+""",
+        encoding="utf-8",
+    )
+
+    table = write_routes(path, {TaskKind.IMPLEMENT: (Engine.CLAUDE, Engine.CODEX)})
+
+    assert table.routes[TaskKind.IMPLEMENT] == EngineRoute(Engine.CLAUDE, (Engine.CODEX,))
+    assert table.routes[TaskKind.REVIEW].engine == Engine.GROK
+    assert table.dangerous_engines == frozenset({Engine.CODEX})
+    assert table.budgets[Risk.NORMAL][0] == 5
+    assert table.deny_rules == ("Bash(git push:*)",)
+    with pytest.raises(RoutingError, match="at least one"):
+        write_routes(path, {TaskKind.TEST: ()})
 
 
 def test_no_engine_available_is_an_error() -> None:

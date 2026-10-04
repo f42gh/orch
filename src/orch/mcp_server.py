@@ -46,13 +46,14 @@ from orch.models import (
     WorkflowType,
 )
 from orch.parsing import (
+    parse_chains,
     parse_engine,
     parse_enum,
     parse_iso_datetime,
     route_overrides,
     task_request,
 )
-from orch.router import load_routing_table
+from orch.router import RoutingError, load_routing_table, write_routes
 from orch.result import save_git_diff
 from orch.stats import build_stats
 from orch.usage import collect_usage
@@ -138,7 +139,9 @@ def build_server(config: Config) -> MCPServer:
         instructions=(
             "Delegate coding work to other agent CLIs (codex, grok, antigravity, claude). "
             "Each task runs in its own git worktree, so several can run at once without "
-            "colliding. Call orch_engines first — and orch_usage when the plan is large "
+            "colliding. Call orch_engines first; if its routing table is empty or "
+            "incomplete, ask the user how to split work across the installed engines and "
+            "call orch_routing_set. Call orch_usage when the plan is large "
             "enough that an exhausted subscription would matter — then confirm Run versus "
             "Batch and the primary/fallback routes with the user. Use orch_run_create and "
             "orch_run_dispatch when later work may be added; use orch_batch_dispatch for "
@@ -157,8 +160,8 @@ def build_server(config: Config) -> MCPServer:
         description=(
             "List the agent CLIs installed on this machine, what each can report, and the "
             "kind-to-engine routing table. Call this before dispatching so you know which "
-            "engines are actually available. An empty routing table means routing.toml is "
-            "missing: ask the user to run `orch init`, or pass `engine` explicitly."
+            "engines are actually available. A kind missing from the routing table has no "
+            "engine: ask the user how to route it and call orch_routing_set."
         )
     )
     def orch_engines() -> dict[str, Any]:
@@ -170,6 +173,25 @@ def build_server(config: Config) -> MCPServer:
             "routing_file": str(config.routing_path) if config.routing_path.exists() else None,
             "kinds": [kind.value for kind in TaskKind],
         }
+
+    @server.tool(
+        description=(
+            "Set which engines handle each task kind, in order (first is the primary), "
+            "by writing routing.toml. Only the kinds given change; budgets, deny rules "
+            "and allow_dangerous are kept untouched. Use it when orch_engines shows an "
+            "empty or incomplete routing table: first ask the user how they want work "
+            "split across the installed engines; if they have no preference, route every "
+            "kind to all installed engines. Example: "
+            '{"implement": ["codex", "claude"], "review": ["grok"]}. Existing Runs and '
+            "Batches keep their snapshotted routes."
+        )
+    )
+    def orch_routing_set(routes: dict[str, list[str]]) -> dict[str, Any]:
+        try:
+            table = write_routes(config.routing_path, _workflow_call(parse_chains, routes))
+        except RoutingError as exc:
+            raise DispatchError(str(exc)) from None
+        return {"routing": table.describe(), "routing_file": str(config.routing_path)}
 
     @server.tool(
         description=(

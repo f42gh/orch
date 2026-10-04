@@ -3,6 +3,7 @@ description: Plan and delegate coding work through orch workflows
 argument-hint: <work to orchestrate>
 allowed-tools:
   - mcp__orch__orch_engines
+  - mcp__orch__orch_routing_set
   - mcp__orch__orch_dispatch
   - mcp__orch__orch_run_create
   - mcp__orch__orch_run_dispatch
@@ -33,7 +34,7 @@ Orchestrate this request with `orch`:
 Follow this workflow:
 
 1. Inspect enough of the repository to understand the request and acceptance criteria, then split the work into tasks. Mark dependencies explicitly; do not parallelize tasks that depend on one another or are likely to edit the same code.
-2. Call `orch_engines` before proposing an assignment. Use its installed-engine data and automatic routing defaults; do not assume that every engine is available.
+2. Call `orch_engines` before proposing an assignment; do not assume that every engine is available. If its routing table is empty or lacks a kind you need, set it up first: show the installed engines and ask the user how they want work split across them (for example, which engine should lead implementation and which should review). If they have no preference, route every kind to all installed engines. Then call `orch_routing_set` with the resulting ordered list per kind. This is saved for later sessions, so ask only once.
 3. Before dispatching anything, ask the user to explicitly confirm all of the following:
    - **Run or Batch**: use a Run when tasks may be added later or when a later task depends on reviewing an earlier result. Use a Batch only when the complete set of independent tasks is known now.
    - **Routes**: the primary engine for every task kind that will be used. `agy` is accepted as an input alias for `antigravity`; outputs use the canonical name `antigravity`.

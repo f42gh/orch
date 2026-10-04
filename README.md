@@ -7,8 +7,9 @@
 
 Claude Code がオーケストレーターとなり、`codex`・`grok`・`agy`(Antigravity)・`claude` が
 MCP サーバー経由で呼び出されるワーカーになる。どの kind をどのエンジンに送るかはコードに
-持たず、`routing.toml` だけで決める。最初に一度 `orch init` を実行すると、この端末で見つかった
-エンジンを全 kind に並べた `routing.toml` が書き出されるので、好みの順に並べ替える。
+持たず、`routing.toml` だけで決める。初回は `/orch` を使うと、Claude Code がインストール済み
+エンジンを確認し、作業の分け方の希望を聞いてから `orch_routing_set` で書き込む。希望がなければ
+全 kind を見つかった全エンジンに割り当てる。CLI だけで済ませるなら `orch init` が同じ既定値を書く。
 
 | kind | アクセス |
 |---|---|
@@ -341,7 +342,7 @@ note: antigravity agy reports no quota: its JSON result carries tokens only, …
 
 ## ルーティングのチューニング
 
-`~/.config/orch/routing.toml` は `orch init` が書き出す。ルートはこのファイルにしか
+`~/.config/orch/routing.toml` は `orch_routing_set` か `orch init` が書き出す。ルートはこのファイルにしか
 なく、書かれていない kind はエンジンを明示しない限り動かない。budget と deny ルールは書いた
 キーだけが上書きされる。Run と Batch は作成時に具体化したルートを保存するため、後からこの
 ファイルを変更しても既存ワークフローは変わらない:

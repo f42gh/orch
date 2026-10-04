@@ -8,18 +8,16 @@ ended up without `--json`.
 
 from __future__ import annotations
 
-import io
 import json
 from pathlib import Path
 
 import pytest
 
-from orch.cli import init_chains, main
+from orch.cli import main
 from orch.config import Config
 from orch.db import TaskStore
 from orch.engines.base import Capabilities
-from orch.models import Engine, TaskKind
-from orch.workflows import WorkflowError
+from orch.models import Engine
 
 
 def _capability(engine: Engine) -> Capabilities:
@@ -329,16 +327,3 @@ def test_the_cli_imports_without_the_optional_extras(monkeypatch: pytest.MonkeyP
 
     assert build_parser().parse_args(["mcp"]).command == "mcp"
 
-
-def test_init_asks_each_kind_and_enter_keeps_the_installed_order() -> None:
-    installed = (Engine.CLAUDE, Engine.CODEX)
-    answers = io.StringIO("y\ncodex, agy\n" + "\n" * (len(TaskKind) - 1))
-    chains = init_chains(installed, stdin=answers, prompt_output=io.StringIO())
-
-    assert chains[TaskKind.IMPLEMENT] == (Engine.CODEX, Engine.ANTIGRAVITY)
-    assert chains[TaskKind.REVIEW] == installed
-    with pytest.raises(WorkflowError, match="twice"):
-        init_chains(installed, stdin=io.StringIO("y\ncodex,codex\n"), prompt_output=io.StringIO())
-    # Declining (Enter defaults to no) gives every kind the detected engines.
-    declined = init_chains(installed, stdin=io.StringIO("\n"), prompt_output=io.StringIO())
-    assert set(declined.values()) == {installed}
