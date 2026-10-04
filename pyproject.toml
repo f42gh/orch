@@ -1,5 +1,5 @@
 [project]
-name = "agent-orchestrator"
+name = "orch"
 version = "0.1.0"
 description = "Local multi-engine agent orchestrator: routes tasks to codex, grok, antigravity or claude in isolated git worktrees"
 readme = "README.md"
