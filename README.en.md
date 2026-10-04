@@ -333,7 +333,7 @@ refresh it.
     diff.patch result.json
 ```
 
-Override with `--runtime-root` or `AGENT_ORCHESTRATOR_RUNTIME_ROOT`.
+Override with `--runtime-root` or `ORCH_RUNTIME_ROOT`.
 
 A finished task lands in `needs_review`, never `succeeded` — nothing marks its own work
 as done. `result.json` carries the summary, structured findings for reviews, changed

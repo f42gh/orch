@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
-RUNTIME_ROOT_ENV = "AGENT_ORCHESTRATOR_RUNTIME_ROOT"
-ROUTING_PATH_ENV = "AGENT_ORCHESTRATOR_ROUTING"
+RUNTIME_ROOT_ENV = "ORCH_RUNTIME_ROOT"
+ROUTING_PATH_ENV = "ORCH_ROUTING"
 DEFAULT_ROUTING_PATH = "~/.config/orch/routing.toml"
 
 

@@ -196,7 +196,7 @@ def _runtime_root_parent() -> argparse.ArgumentParser:
         "--runtime-root",
         default=argparse.SUPPRESS,
         metavar="PATH",
-        help="override the runtime root (default: $AGENT_ORCHESTRATOR_RUNTIME_ROOT "
+        help="override the runtime root (default: $ORCH_RUNTIME_ROOT "
         "or ~/agent-runtime)",
     )
     return parent
@@ -214,7 +214,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--runtime-root",
         default=None,
         metavar="PATH",
-        help="override the runtime root (default: $AGENT_ORCHESTRATOR_RUNTIME_ROOT "
+        help="override the runtime root (default: $ORCH_RUNTIME_ROOT "
         "or ~/agent-runtime)",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

@@ -316,7 +316,7 @@ note: antigravity agy reports no quota: its JSON result carries tokens only, …
     diff.patch result.json
 ```
 
-`--runtime-root` または `AGENT_ORCHESTRATOR_RUNTIME_ROOT` で上書きできる。
+`--runtime-root` または `ORCH_RUNTIME_ROOT` で上書きできる。
 
 完了したタスクは `succeeded` ではなく必ず `needs_review` になる — 自分の成果物を自分で
 完了扱いにするものはいない。`result.json` には、要約、レビューの場合は構造化された指摘、
